@@ -42,13 +42,14 @@ func main() {
 	}
 
 	roomRepo := postgres.NewRoomRepo(dbPool)
+	userRepo := postgres.NewUserRepo(dbPool)
 	scheduleRepo := postgres.NewScheduleRepo(dbPool)
 	slotRepo := postgres.NewSlotRepo(dbPool)
 	bookingRepo := postgres.NewBookingRepo(dbPool)
 	txManager := postgres.NewTxManager(dbPool)
 
 	router := httptransport.NewRouterWithDependencies(httptransport.RouterDependencies{
-		AuthUC:     authsvc.NewService(authsvc.NewHMACJWTSigner(cfg.JWTSecret)),
+		AuthUC:     authsvc.NewService(authsvc.NewHMACJWTSigner(cfg.JWTSecret), userRepo),
 		RoomUC:     roomuc.NewService(roomRepo),
 		ScheduleUC: scheduleuc.NewService(roomRepo, scheduleRepo),
 		SlotUC:     slotuc.NewService(roomRepo, slotRepo),

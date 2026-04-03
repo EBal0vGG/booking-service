@@ -22,6 +22,15 @@ go run ./cmd/app
 
 Переменные окружения: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, `DB_NAME`, `PORT`, `JWT_SECRET`, `RUN_MIGRATIONS`, `MIGRATIONS_PATH`.
 
+## Аутентификация
+
+- `POST /register` — создаёт пользователя (`email`, `password`, `role`) и возвращает `user` без пароля.
+- `POST /login` — проверяет `email/password` и возвращает JWT access token.
+- `POST /dummyLogin` — тестовый endpoint, оставлен для обратной совместимости.
+
+Пароли хранятся как `bcrypt`-хеш в `users.password_hash` (миграция `0002_add_password_hash_to_users`).
+JWT содержит `user_id`, `role`, `exp`; middleware валидирует одинаково токены из `/login` и `/dummyLogin`.
+
 ### Makefile
 
 - **`make up`** — `docker compose up --build -d` (контейнеры в фоне, терминал не блокируется).

@@ -140,7 +140,7 @@ func TestRequireUser_ValidToken_CallsNextAndSetsUser(t *testing.T) {
 	secret := "test-secret"
 	auth := NewAuth(secret)
 
-	svc := authsvc.NewService(authsvc.NewHMACJWTSigner(secret))
+	svc := authsvc.NewService(authsvc.NewHMACJWTSigner(secret), nil)
 	token, err := svc.DummyLogin(context.Background(), domain.RoleUser)
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
@@ -163,4 +163,3 @@ func TestRequireUser_ValidToken_CallsNextAndSetsUser(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.True(t, called)
 }
-

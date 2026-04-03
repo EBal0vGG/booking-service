@@ -25,7 +25,7 @@ type apiErrResponse struct {
 func mustJWT(t *testing.T, secret string, role domain.UserRole) string {
 	t.Helper()
 
-	svc := authsvc.NewService(authsvc.NewHMACJWTSigner(secret))
+	svc := authsvc.NewService(authsvc.NewHMACJWTSigner(secret), nil)
 	token, err := svc.DummyLogin(context.Background(), role)
 	require.NoError(t, err)
 	require.NotEmpty(t, strings.TrimSpace(token))
@@ -52,4 +52,3 @@ func decodeErrorMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	return body.Error.Message
 }
-

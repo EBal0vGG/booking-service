@@ -9,6 +9,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// UserRepository stores users for auth/register/login.
+type UserRepository interface {
+	GetByEmail(ctx context.Context, email string) (*domain.User, error)
+	Create(ctx context.Context, user domain.User) error
+}
+
 // RoomRepository is storage boundary for rooms.
 type RoomRepository interface {
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Room, error)
@@ -43,4 +49,3 @@ type BookingRepository interface {
 	// ListFutureByUser returns only future bookings (slot.start >= now), owned by user.
 	ListFutureByUser(ctx context.Context, userID uuid.UUID, now time.Time) ([]domain.Booking, error)
 }
-

@@ -14,8 +14,9 @@ const (
 )
 
 type User struct {
-	ID        uuid.UUID
-	Email     string
-	Role      UserRole
-	CreatedAt time.Time
+	ID           uuid.UUID
+	Email        string
+	PasswordHash *string
+	Role         UserRole
+	CreatedAt    time.Time
 }

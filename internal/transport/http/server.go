@@ -46,6 +46,8 @@ func registerRoutes(r chi.Router, deps RouterDependencies) {
 		response.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	r.Post("/register", authHandler.Register)
+	r.Post("/login", authHandler.Login)
 	r.Post("/dummyLogin", authHandler.DummyLogin)
 
 	r.Group(func(pr chi.Router) {
