@@ -31,7 +31,7 @@ migrate-down:
 		down 1
 
 test:
-	go test -count=1 ./...
+	go test -count=1 ./... -v
 
 test-integration:
 	DATABASE_URL="$(DATABASE_URL)" go test -tags=integration -count=1 ./internal/integrationtest/... -v

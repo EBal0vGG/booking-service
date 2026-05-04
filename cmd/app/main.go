@@ -11,6 +11,7 @@ import (
 
 	"booking-service/internal/app"
 	"booking-service/internal/config"
+	"booking-service/internal/realtime"
 	"booking-service/internal/repository/postgres"
 	httptransport "booking-service/internal/transport/http"
 	authsvc "booking-service/internal/usecase/auth"
@@ -47,13 +48,17 @@ func main() {
 	slotRepo := postgres.NewSlotRepo(dbPool)
 	bookingRepo := postgres.NewBookingRepo(dbPool)
 	txManager := postgres.NewTxManager(dbPool)
+	realtimeHub := realtime.NewHub()
+	realtimeManager := realtime.NewManager(realtimeHub)
+	wsHandler := realtime.NewWSHandler(realtimeHub, cfg.JWTSecret)
 
 	router := httptransport.NewRouterWithDependencies(httptransport.RouterDependencies{
 		AuthUC:     authsvc.NewService(authsvc.NewHMACJWTSigner(cfg.JWTSecret), userRepo),
 		RoomUC:     roomuc.NewService(roomRepo),
 		ScheduleUC: scheduleuc.NewService(roomRepo, scheduleRepo),
 		SlotUC:     slotuc.NewService(roomRepo, slotRepo),
-		BookingUC:  bookinguc.NewService(txManager, bookingRepo, slotRepo),
+		BookingUC:  bookinguc.NewService(txManager, bookingRepo, slotRepo, realtimeManager),
+		WSHandler:  wsHandler,
 		JWTSecret:  cfg.JWTSecret,
 	})
 	server := httptransport.NewServer(cfg.Port, router)

@@ -28,8 +28,38 @@ go run ./cmd/app
 - `POST /login` — проверяет `email/password` и возвращает JWT access token.
 - `POST /dummyLogin` — тестовый endpoint, оставлен для обратной совместимости.
 
-Пароли хранятся как `bcrypt`-хеш в `users.password_hash` (миграция `0002_add_password_hash_to_users`).
+Пароли хранятся как `bcrypt`-хеш в `users.password_hash` (добавлено в базовой схеме миграции `0001_init`).
 JWT содержит `user_id`, `role`, `exp`; middleware валидирует одинаково токены из `/login` и `/dummyLogin`.
+
+## Realtime (WebSocket)
+
+- `GET /ws` — WebSocket endpoint.
+- Аутентификация: `Authorization: Bearer <jwt>`; для браузерного WS-клиента поддержан fallback `?token=<jwt>`.
+- После подключения клиент отправляет:
+
+```json
+{"type":"subscribe","roomId":"<uuid>"}
+```
+
+- Сервер подтверждает подписку:
+
+```json
+{"type":"subscribed","roomId":"<uuid>"}
+```
+
+- После успешного `POST /bookings/create` рассылается:
+
+```json
+{"type":"slot_booked","roomId":"...","slotId":"...","bookingId":"...","timestamp":"..."}
+```
+
+- После успешного `POST /bookings/{bookingId}/cancel` рассылается:
+
+```json
+{"type":"slot_released","roomId":"...","slotId":"...","bookingId":"...","timestamp":"..."}
+```
+
+Реализация in-memory (внутри монолита): подписки по room, ping/pong, read limit, write timeout, отключение медленных клиентов.
 
 ### Makefile
 
@@ -82,6 +112,21 @@ export ROOM_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
 ```
 
 Переменные: `REQUESTS` (число запросов, по умолчанию 300), `CONCURRENCY` (параллелизм, по умолчанию 15), `DATE` (UTC-дата для `?date=`). Отчёт — вывод `hey` (QPS, латентность, коды ответов).
+
+## Realtime smoke test
+
+Скрипт `scripts/ws_smoke.go` проверяет e2e-поток realtime:
+
+1. логин через `POST /dummyLogin`;
+2. подключение к `ws://localhost:8080/ws` и `subscribe` на комнату;
+3. `POST /bookings/create` -> ожидается `slot_booked`;
+4. `POST /bookings/{id}/cancel` -> ожидается `slot_released`.
+
+Перед запуском нужен существующий будущий слот (можно создать вручную в БД). Затем:
+
+```bash
+go run ./scripts/ws_smoke.go
+```
 
 ## Почему rolling window в генераторе слотов
 

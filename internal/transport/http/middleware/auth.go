@@ -30,21 +30,26 @@ func NewAuth(secret string) *Auth {
 
 func (a *Auth) RequireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := bearerToken(r.Header.Get("Authorization"))
-		if token == "" {
-			response.WriteError(w, domain.NewDomainError(domain.ErrorUnauthorized, "missing bearer token"))
-			return
-		}
-
-		user, err := a.parseAndValidateToken(token)
+		user, err := a.AuthenticateRequest(r)
 		if err != nil {
 			response.WriteError(w, err)
 			return
 		}
-
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (a *Auth) AuthenticateRequest(r *http.Request) (domain.User, error) {
+	token := bearerToken(r.Header.Get("Authorization"))
+	if token == "" {
+		return domain.User{}, domain.NewDomainError(domain.ErrorUnauthorized, "missing bearer token")
+	}
+	return a.AuthenticateToken(token)
+}
+
+func (a *Auth) AuthenticateToken(token string) (domain.User, error) {
+	return a.parseAndValidateToken(token)
 }
 
 func UserFromContext(ctx context.Context) (domain.User, bool) {

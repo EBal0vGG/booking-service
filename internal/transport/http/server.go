@@ -24,6 +24,7 @@ type RouterDependencies struct {
 	ScheduleUC usecase.ScheduleUsecase
 	SlotUC     usecase.SlotUsecase
 	BookingUC  usecase.BookingUsecase
+	WSHandler  http.Handler
 	JWTSecret  string
 }
 
@@ -45,6 +46,9 @@ func registerRoutes(r chi.Router, deps RouterDependencies) {
 	r.Get("/_info", func(w http.ResponseWriter, _ *http.Request) {
 		response.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	if deps.WSHandler != nil {
+		r.Handle("/ws", deps.WSHandler)
+	}
 
 	r.Post("/register", authHandler.Register)
 	r.Post("/login", authHandler.Login)

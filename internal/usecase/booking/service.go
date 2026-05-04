@@ -15,18 +15,47 @@ type Service struct {
 	tx       repository.TxManager
 	bookings repository.BookingRepository
 	slots    repository.SlotRepository
+	events   EventPublisher
 	now      func() time.Time
+}
+
+type EventPublisher interface {
+	SlotBooked(ctx context.Context, roomID, slotID, bookingID uuid.UUID)
+	SlotReleased(ctx context.Context, roomID, slotID, bookingID uuid.UUID)
+}
+
+type noopEventPublisher struct{}
+
+func (noopEventPublisher) SlotBooked(ctx context.Context, roomID, slotID, bookingID uuid.UUID) {
+	_, _, _, _ = ctx, roomID, slotID, bookingID
+}
+
+func (noopEventPublisher) SlotReleased(ctx context.Context, roomID, slotID, bookingID uuid.UUID) {
+	_, _, _, _ = ctx, roomID, slotID, bookingID
+}
+
+func (s *Service) eventPublisher() EventPublisher {
+	if s.events == nil {
+		return noopEventPublisher{}
+	}
+	return s.events
 }
 
 func NewService(
 	tx repository.TxManager,
 	bookings repository.BookingRepository,
 	slots repository.SlotRepository,
+	events ...EventPublisher,
 ) *Service {
+	publisher := EventPublisher(noopEventPublisher{})
+	if len(events) > 0 && events[0] != nil {
+		publisher = events[0]
+	}
 	return &Service{
 		tx:       tx,
 		bookings: bookings,
 		slots:    slots,
+		events:   publisher,
 		now:      func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -47,6 +76,7 @@ func (s *Service) CreateBooking(
 
 	now := s.now()
 	var created domain.Booking
+	var roomID uuid.UUID
 	err := s.tx.WithinTransaction(ctx, func(txCtx context.Context) error {
 		slot, err := s.slots.GetByID(txCtx, slotID)
 		if err != nil {
@@ -58,6 +88,7 @@ func (s *Service) CreateBooking(
 		if slot.StartTime.UTC().Before(now) {
 			return domain.NewDomainError(domain.ErrorInvalidRequest, "cannot create booking for past slot")
 		}
+		roomID = slot.RoomID
 
 		created = domain.Booking{
 			ID:        uuid.New(),
@@ -83,6 +114,7 @@ func (s *Service) CreateBooking(
 	if err != nil {
 		return domain.Booking{}, err
 	}
+	s.eventPublisher().SlotBooked(ctx, roomID, created.SlotID, created.ID)
 	return created, nil
 }
 
@@ -92,6 +124,7 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 	}
 
 	var result domain.Booking
+	var roomID uuid.UUID
 	err := s.tx.WithinTransaction(ctx, func(txCtx context.Context) error {
 		existing, err := s.bookings.GetByID(txCtx, bookingID)
 		if err != nil {
@@ -111,11 +144,21 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 		if updated == nil {
 			return domain.NewDomainError(domain.ErrorBookingNotFound, "booking not found")
 		}
+		slot, err := s.slots.GetByID(txCtx, updated.SlotID)
+		if err != nil {
+			return domain.WrapDomainError(domain.ErrorInternalError, "get slot", err)
+		}
+		if slot != nil {
+			roomID = slot.RoomID
+		}
 		result = *updated
 		return nil
 	})
 	if err != nil {
 		return domain.Booking{}, err
+	}
+	if roomID != uuid.Nil {
+		s.eventPublisher().SlotReleased(ctx, roomID, result.SlotID, result.ID)
 	}
 	return result, nil
 }
@@ -148,4 +191,3 @@ func (s *Service) ListMyBookings(ctx context.Context, user domain.User) ([]domai
 	}
 	return bookings, nil
 }
-
