@@ -9,6 +9,7 @@ import (
 	"booking-service/internal/usecase"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func NewServer(port string, handler http.Handler) *http.Server {
@@ -43,19 +44,29 @@ func registerRoutes(r chi.Router, deps RouterDependencies) {
 	slotHandler := handler.NewSlotHandler(deps.SlotUC)
 	bookingHandler := handler.NewBookingHandler(deps.BookingUC)
 
-	r.Get("/_info", func(w http.ResponseWriter, _ *http.Request) {
-		response.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-	if deps.WSHandler != nil {
-		r.Handle("/ws", deps.WSHandler)
-	}
+	r.Use(authmw.RequestID)
+	r.Use(authmw.Recovery)
+	r.Use(authmw.HTTPMetrics)
 
-	r.Post("/register", authHandler.Register)
-	r.Post("/login", authHandler.Login)
-	r.Post("/dummyLogin", authHandler.DummyLogin)
+	r.Group(func(pub chi.Router) {
+		pub.Use(authmw.RequestLogger)
+
+		pub.Get("/_info", func(w http.ResponseWriter, _ *http.Request) {
+			response.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		})
+		pub.Handle("/metrics", promhttp.Handler())
+		if deps.WSHandler != nil {
+			pub.Handle("/ws", deps.WSHandler)
+		}
+
+		pub.Post("/register", authHandler.Register)
+		pub.Post("/login", authHandler.Login)
+		pub.Post("/dummyLogin", authHandler.DummyLogin)
+	})
 
 	r.Group(func(pr chi.Router) {
 		pr.Use(auth.RequireUser)
+		pr.Use(authmw.RequestLogger)
 
 		pr.Get("/rooms/list", roomHandler.ListRooms)
 		pr.Post("/rooms/create", roomHandler.CreateRoom)

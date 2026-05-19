@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
+
+	observabilitymetrics "booking-service/internal/observability/metrics"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -53,7 +55,8 @@ func (s *RedisSubscriber) Run(ctx context.Context) error {
 			return nil
 		}
 
-		log.Printf("realtime redis subscriber consume error, retrying in %s: %v", s.retryDelay, err)
+		observabilitymetrics.IncRedisRealtimeSubscriberReconnect()
+		slog.Warn("realtime redis subscriber consume error; retrying", "retry_delay", s.retryDelay.String(), "error", err)
 		timer := time.NewTimer(s.retryDelay)
 		select {
 		case <-ctx.Done():
@@ -70,7 +73,7 @@ func (s *RedisSubscriber) consume(ctx context.Context) error {
 	pubsub := s.client.Subscribe(ctx, s.channel)
 	defer func() {
 		if err := pubsub.Close(); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("realtime redis subscriber close error: %v", err)
+			slog.Warn("realtime redis subscriber close error", "error", err)
 		}
 	}()
 
@@ -88,7 +91,7 @@ func (s *RedisSubscriber) consume(ctx context.Context) error {
 				return errors.New("redis pubsub channel closed")
 			}
 			if err := s.handleMessage(msg.Payload); err != nil {
-				log.Printf("realtime redis subscriber message dropped: %v", err)
+				slog.Warn("realtime redis subscriber message dropped", "error", err)
 			}
 		}
 	}
@@ -97,23 +100,35 @@ func (s *RedisSubscriber) consume(ctx context.Context) error {
 func (s *RedisSubscriber) handleMessage(payload string) error {
 	var event Event
 	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		observabilitymetrics.IncRedisRealtimeEventReceived("unknown", "error")
 		return fmt.Errorf("unmarshal event: %w", err)
 	}
 	if err := event.Validate(); err != nil {
+		observabilitymetrics.IncRedisRealtimeEventReceived(eventTypeLabel(event.Type), "error")
 		return fmt.Errorf("invalid event: %w", err)
 	}
 
 	roomID, err := event.RoomUUID()
 	if err != nil {
+		observabilitymetrics.IncRedisRealtimeEventReceived(eventTypeLabel(event.Type), "error")
 		return fmt.Errorf("invalid room uuid: %w", err)
 	}
 
 	serverMessage := event.ToServerMessage()
 	outboundPayload, err := json.Marshal(serverMessage)
 	if err != nil {
+		observabilitymetrics.IncRedisRealtimeEventReceived(eventTypeLabel(event.Type), "error")
 		return fmt.Errorf("marshal server message: %w", err)
 	}
 
 	s.hub.Broadcast(roomID, outboundPayload)
+	observabilitymetrics.IncRedisRealtimeEventReceived(eventTypeLabel(event.Type), "success")
 	return nil
+}
+
+func eventTypeLabel(eventType EventType) string {
+	if eventType == "" {
+		return "unknown"
+	}
+	return string(eventType)
 }

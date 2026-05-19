@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"encoding/json"
 	"sync"
 
 	"github.com/google/uuid"
@@ -64,9 +65,10 @@ func (h *Hub) Broadcast(roomID uuid.UUID, payload []byte) {
 	}
 	h.mu.RUnlock()
 
+	messageType := extractMessageType(payload)
 	slow := make([]*Client, 0)
 	for _, c := range clients {
-		if !c.enqueue(payload) {
+		if !c.enqueue(payload, messageType) {
 			slow = append(slow, c)
 		}
 	}
@@ -75,4 +77,17 @@ func (h *Hub) Broadcast(roomID uuid.UUID, payload []byte) {
 	for _, c := range slow {
 		c.Close()
 	}
+}
+
+func extractMessageType(payload []byte) string {
+	var message struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(payload, &message); err != nil {
+		return "unknown"
+	}
+	if message.Type == "" {
+		return "unknown"
+	}
+	return message.Type
 }

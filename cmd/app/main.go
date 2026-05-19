@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os/signal"
 	"sync"
@@ -13,6 +13,8 @@ import (
 
 	"booking-service/internal/app"
 	"booking-service/internal/config"
+	"booking-service/internal/observability/logging"
+	observabilitymetrics "booking-service/internal/observability/metrics"
 	"booking-service/internal/realtime"
 	"booking-service/internal/repository/postgres"
 	httptransport "booking-service/internal/transport/http"
@@ -28,21 +30,26 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		slog.Error("load config", "error", err)
+		return
 	}
+	logger := logging.New(cfg.Env, cfg.LogLevel)
+	slog.SetDefault(logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	dbPool, err := postgres.NewPool(ctx, cfg.DatabaseURL())
 	if err != nil {
-		log.Fatalf("connect postgres: %v", err)
+		slog.Error("connect postgres", "error", err)
+		return
 	}
 	defer dbPool.Close()
 
 	if cfg.RunMigrations {
 		if err := app.RunMigrations(cfg.MigrationsPath, cfg.DatabaseURL()); err != nil {
-			log.Fatalf("run migrations: %v", err)
+			slog.Error("run migrations", "error", err)
+			return
 		}
 	}
 
@@ -60,14 +67,14 @@ func main() {
 	})
 	pingCtx, pingCancel := context.WithTimeout(ctx, time.Second)
 	if err := redisClient.Ping(pingCtx).Err(); err != nil {
-		log.Printf("Redis unavailable at startup (%s): %v; realtime will run in degraded mode until reconnect", cfg.RedisAddr, err)
+		slog.Warn("redis unavailable at startup; realtime in degraded mode until reconnect", "addr", cfg.RedisAddr, "error", err)
 	} else {
-		log.Printf("Redis connected: %s db=%d channel=%s", cfg.RedisAddr, cfg.RedisDB, cfg.RedisChannel)
+		slog.Info("redis connected", "addr", cfg.RedisAddr, "db", cfg.RedisDB, "channel", cfg.RedisChannel)
 	}
 	pingCancel()
 	defer func() {
 		if err := redisClient.Close(); err != nil {
-			log.Printf("close redis client: %v", err)
+			slog.Warn("close redis client", "error", err)
 		}
 	}()
 
@@ -75,6 +82,8 @@ func main() {
 	realtimePublisher := realtime.NewRedisPublisher(redisClient, cfg.RedisChannel)
 	realtimeSubscriber := realtime.NewRedisSubscriber(redisClient, cfg.RedisChannel, realtimeHub)
 	wsHandler := realtime.NewWSHandler(realtimeHub, cfg.JWTSecret)
+	bookingService := bookinguc.NewService(txManager, bookingRepo, slotRepo, realtimePublisher).
+		WithMetrics(observabilitymetrics.NewBookingUsecaseMetrics())
 
 	var backgroundWG sync.WaitGroup
 	subscriberErrCh := make(chan error, 1)
@@ -91,7 +100,7 @@ func main() {
 		RoomUC:     roomuc.NewService(roomRepo),
 		ScheduleUC: scheduleuc.NewService(roomRepo, scheduleRepo),
 		SlotUC:     slotuc.NewService(roomRepo, slotRepo),
-		BookingUC:  bookinguc.NewService(txManager, bookingRepo, slotRepo, realtimePublisher),
+		BookingUC:  bookingService,
 		WSHandler:  wsHandler,
 		JWTSecret:  cfg.JWTSecret,
 	})
@@ -99,7 +108,7 @@ func main() {
 	errCh := make(chan error, 1)
 
 	go func() {
-		log.Printf("HTTP server listening on :%s", cfg.Port)
+		slog.Info("http server listening", "port", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -120,7 +129,7 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf("graceful shutdown failed: %v", err)
+		slog.Warn("graceful shutdown failed", "error", err)
 	}
 
 	done := make(chan struct{})
@@ -131,10 +140,10 @@ func main() {
 	select {
 	case <-done:
 	case <-shutdownCtx.Done():
-		log.Printf("background shutdown timeout reached")
+		slog.Warn("background shutdown timeout reached")
 	}
 
 	if runErr != nil {
-		log.Fatalf("%v", runErr)
+		slog.Error("application terminated with error", "error", runErr)
 	}
 }

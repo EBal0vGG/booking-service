@@ -3,8 +3,10 @@ package realtime
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"time"
+
+	observabilitymetrics "booking-service/internal/observability/metrics"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -39,14 +41,16 @@ func (p *RedisPublisher) publish(ctx context.Context, eventType EventType, roomI
 		return
 	}
 	if p.channel == "" {
-		log.Printf("realtime redis publish skipped: empty channel")
+		observabilitymetrics.IncRedisRealtimePublish(string(eventType), "error")
+		slog.Warn("realtime redis publish skipped: empty channel", "event_type", eventType)
 		return
 	}
 
 	event := NewEvent(eventType, roomID, slotID, bookingID, time.Now().UTC())
 	payload, err := json.Marshal(event)
 	if err != nil {
-		log.Printf("realtime redis publish marshal error: %v", err)
+		observabilitymetrics.IncRedisRealtimePublish(string(event.Type), "error")
+		slog.Error("realtime redis publish marshal error", "event_type", event.Type, "error", err)
 		return
 	}
 
@@ -55,6 +59,9 @@ func (p *RedisPublisher) publish(ctx context.Context, eventType EventType, roomI
 
 	if err := p.client.Publish(publishCtx, p.channel, payload).Err(); err != nil {
 		// Best-effort delivery: booking/cancel must not fail because of realtime transport issues.
-		log.Printf("realtime redis publish error channel=%s type=%s roomId=%s: %v", p.channel, event.Type, event.RoomID, err)
+		observabilitymetrics.IncRedisRealtimePublish(string(event.Type), "error")
+		slog.Warn("realtime redis publish error", "channel", p.channel, "event_type", event.Type, "room_id", event.RoomID, "error", err)
+		return
 	}
+	observabilitymetrics.IncRedisRealtimePublish(string(event.Type), "success")
 }

@@ -16,6 +16,7 @@ type Service struct {
 	bookings repository.BookingRepository
 	slots    repository.SlotRepository
 	events   EventPublisher
+	metrics  BookingMetrics
 	now      func() time.Time
 }
 
@@ -24,7 +25,16 @@ type EventPublisher interface {
 	SlotReleased(ctx context.Context, roomID, slotID, bookingID uuid.UUID)
 }
 
+type BookingMetrics interface {
+	IncBookingCreated()
+	IncBookingCancelled()
+	IncBookingConflict()
+	IncBookingCreateError()
+	IncBookingCancelError()
+}
+
 type noopEventPublisher struct{}
+type noopBookingMetrics struct{}
 
 func (noopEventPublisher) SlotBooked(ctx context.Context, roomID, slotID, bookingID uuid.UUID) {
 	_, _, _, _ = ctx, roomID, slotID, bookingID
@@ -34,11 +44,24 @@ func (noopEventPublisher) SlotReleased(ctx context.Context, roomID, slotID, book
 	_, _, _, _ = ctx, roomID, slotID, bookingID
 }
 
+func (noopBookingMetrics) IncBookingCreated()     {}
+func (noopBookingMetrics) IncBookingCancelled()   {}
+func (noopBookingMetrics) IncBookingConflict()    {}
+func (noopBookingMetrics) IncBookingCreateError() {}
+func (noopBookingMetrics) IncBookingCancelError() {}
+
 func (s *Service) eventPublisher() EventPublisher {
 	if s.events == nil {
 		return noopEventPublisher{}
 	}
 	return s.events
+}
+
+func (s *Service) bookingMetrics() BookingMetrics {
+	if s.metrics == nil {
+		return noopBookingMetrics{}
+	}
+	return s.metrics
 }
 
 func NewService(
@@ -56,8 +79,16 @@ func NewService(
 		bookings: bookings,
 		slots:    slots,
 		events:   publisher,
+		metrics:  noopBookingMetrics{},
 		now:      func() time.Time { return time.Now().UTC() },
 	}
+}
+
+func (s *Service) WithMetrics(metrics BookingMetrics) *Service {
+	if metrics != nil {
+		s.metrics = metrics
+	}
+	return s
 }
 
 var _ usecase.BookingUsecase = (*Service)(nil)
@@ -71,6 +102,7 @@ func (s *Service) CreateBooking(
 	_ = createConferenceLink // conference integration is intentionally postponed
 
 	if user.Role != domain.RoleUser {
+		s.bookingMetrics().IncBookingCreateError()
 		return domain.Booking{}, domain.NewDomainError(domain.ErrorForbidden, "booking is allowed only for user role")
 	}
 
@@ -112,14 +144,21 @@ func (s *Service) CreateBooking(
 		return nil
 	})
 	if err != nil {
+		if de, ok := domain.AsDomainError(err); ok && de.Code == domain.ErrorSlotAlreadyBooked {
+			s.bookingMetrics().IncBookingConflict()
+		} else {
+			s.bookingMetrics().IncBookingCreateError()
+		}
 		return domain.Booking{}, err
 	}
+	s.bookingMetrics().IncBookingCreated()
 	s.eventPublisher().SlotBooked(ctx, roomID, created.SlotID, created.ID)
 	return created, nil
 }
 
 func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID uuid.UUID) (domain.Booking, error) {
 	if user.Role != domain.RoleUser {
+		s.bookingMetrics().IncBookingCancelError()
 		return domain.Booking{}, domain.NewDomainError(domain.ErrorForbidden, "cancel is allowed only for user role")
 	}
 
@@ -155,8 +194,10 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 		return nil
 	})
 	if err != nil {
+		s.bookingMetrics().IncBookingCancelError()
 		return domain.Booking{}, err
 	}
+	s.bookingMetrics().IncBookingCancelled()
 	if roomID != uuid.Nil {
 		s.eventPublisher().SlotReleased(ctx, roomID, result.SlotID, result.ID)
 	}

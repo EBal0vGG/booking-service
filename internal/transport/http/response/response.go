@@ -3,7 +3,7 @@ package response
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"booking-service/internal/domain"
@@ -32,7 +32,7 @@ func WriteError(w http.ResponseWriter, err error) {
 	if err == nil {
 		return
 	}
-	log.Printf("http: %v", err)
+	slog.Error("http error response", "error", err)
 
 	if de, ok := domain.AsDomainError(err); ok {
 		body := errorBody{}

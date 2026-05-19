@@ -13,7 +13,7 @@ func TestRedisSubscriberHandleMessage_ValidEventBroadcastsToRoom(t *testing.T) {
 	t.Parallel()
 
 	hub := NewHub()
-	client := &Client{send: make(chan []byte, 1)}
+	client := &Client{send: make(chan outboundMessage, 1)}
 	roomID := uuid.New()
 	hub.Subscribe(roomID, client)
 
@@ -26,9 +26,9 @@ func TestRedisSubscriberHandleMessage_ValidEventBroadcastsToRoom(t *testing.T) {
 	require.NoError(t, err)
 
 	select {
-	case raw := <-client.send:
+	case outbound := <-client.send:
 		var msg ServerMessage
-		require.NoError(t, json.Unmarshal(raw, &msg))
+		require.NoError(t, json.Unmarshal(outbound.payload, &msg))
 		require.Equal(t, MessageTypeSlotBooked, msg.Type)
 		require.Equal(t, event.RoomID, msg.RoomID)
 		require.Equal(t, event.SlotID, msg.SlotID)
@@ -52,7 +52,7 @@ func TestRedisSubscriberHandleMessage_InvalidEvent(t *testing.T) {
 	t.Parallel()
 
 	hub := NewHub()
-	client := &Client{send: make(chan []byte, 1)}
+	client := &Client{send: make(chan outboundMessage, 1)}
 	hub.Subscribe(uuid.New(), client)
 
 	event := Event{

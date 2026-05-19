@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"booking-service/internal/domain"
+	observabilitymetrics "booking-service/internal/observability/metrics"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -26,7 +27,7 @@ type Client struct {
 	hub  *Hub
 	user domain.User
 
-	send chan []byte
+	send chan outboundMessage
 
 	mu         sync.Mutex
 	subscribed map[uuid.UUID]struct{}
@@ -38,18 +39,28 @@ func NewClient(conn *websocket.Conn, hub *Hub, user domain.User) *Client {
 		conn:       conn,
 		hub:        hub,
 		user:       user,
-		send:       make(chan []byte, outboundQueueSize),
+		send:       make(chan outboundMessage, outboundQueueSize),
 		subscribed: make(map[uuid.UUID]struct{}),
 	}
 }
 
 func (c *Client) Run() {
+	observabilitymetrics.IncWSConnections()
 	go c.writePump()
 	c.readPump()
 }
 
 func (c *Client) Close() {
 	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		remainingSubscriptions := len(c.subscribed)
+		c.subscribed = make(map[uuid.UUID]struct{})
+		c.mu.Unlock()
+		if remainingSubscriptions > 0 {
+			observabilitymetrics.AddWSSubscriptions(-remainingSubscriptions)
+		}
+		observabilitymetrics.DecWSConnections()
+
 		_ = c.conn.Close()
 		c.hub.UnsubscribeAll(c)
 		close(c.send)
@@ -108,15 +119,16 @@ func (c *Client) writePump() {
 
 	for {
 		select {
-		case msg, ok := <-c.send:
+		case outbound, ok := <-c.send:
 			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			if err := c.conn.WriteMessage(websocket.TextMessage, outbound.payload); err != nil {
 				return
 			}
+			observabilitymetrics.IncWSMessageSent(outbound.messageType)
 		case <-ticker.C:
 			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
@@ -139,6 +151,7 @@ func (c *Client) subscribe(roomID uuid.UUID) {
 	}
 	c.subscribed[roomID] = struct{}{}
 	c.mu.Unlock()
+	observabilitymetrics.AddWSSubscriptions(1)
 
 	c.hub.Subscribe(roomID, c)
 	c.sendServerMessage(ServerMessage{
@@ -155,6 +168,7 @@ func (c *Client) unsubscribe(roomID uuid.UUID) {
 	}
 	delete(c.subscribed, roomID)
 	c.mu.Unlock()
+	observabilitymetrics.AddWSSubscriptions(-1)
 
 	c.hub.Unsubscribe(roomID, c)
 	c.sendServerMessage(ServerMessage{
@@ -175,22 +189,31 @@ func (c *Client) sendServerMessage(msg ServerMessage) {
 	if err != nil {
 		return
 	}
-	if !c.enqueue(payload) {
+	if !c.enqueue(payload, string(msg.Type)) {
 		// Drop slow client.
 		c.Close()
 	}
 }
 
-func (c *Client) enqueue(payload []byte) (ok bool) {
+func (c *Client) enqueue(payload []byte, messageType string) (ok bool) {
 	defer func() {
 		if recover() != nil {
 			ok = false
 		}
 	}()
+	outbound := outboundMessage{
+		payload:     payload,
+		messageType: messageType,
+	}
 	select {
-	case c.send <- payload:
+	case c.send <- outbound:
 		return true
 	default:
 		return false
 	}
+}
+
+type outboundMessage struct {
+	payload     []byte
+	messageType string
 }

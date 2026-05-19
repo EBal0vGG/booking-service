@@ -17,6 +17,8 @@ type Config struct {
 	RedisPassword  string
 	RedisDB        int
 	RedisChannel   string
+	Env            string
+	LogLevel       string
 	Port           string
 	JWTSecret      string
 	RunMigrations  bool
@@ -39,6 +41,8 @@ func Load() (Config, error) {
 		RedisPassword:  getEnv("REDIS_PASSWORD", ""),
 		RedisDB:        redisDB,
 		RedisChannel:   getEnv("REDIS_CHANNEL", "realtime:events"),
+		Env:            getEnv("APP_ENV", "dev"),
+		LogLevel:       getEnv("LOG_LEVEL", "info"),
 		Port:           getEnv("PORT", "8080"),
 		JWTSecret:      getEnv("JWT_SECRET", "booking-dev-secret"),
 		RunMigrations:  strings.ToLower(getEnv("RUN_MIGRATIONS", "true")) != "false",
@@ -53,6 +57,12 @@ func Load() (Config, error) {
 	}
 	if cfg.RedisChannel == "" {
 		return Config{}, fmt.Errorf("REDIS_CHANNEL is required")
+	}
+	if cfg.Env == "" {
+		return Config{}, fmt.Errorf("APP_ENV is required")
+	}
+	if cfg.LogLevel == "" {
+		return Config{}, fmt.Errorf("LOG_LEVEL is required")
 	}
 
 	return cfg, nil
