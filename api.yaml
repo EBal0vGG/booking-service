@@ -13,6 +13,7 @@ tags:
   - name: Schedules
   - name: Slots
   - name: Bookings
+  - name: Waitlist
 
 components:
   securitySchemes:
@@ -38,6 +39,14 @@ components:
         type: string
         format: uuid
       description: Идентификатор брони
+    WaitlistIdPath:
+      name: waitlistId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Идентификатор записи в очереди ожидания
 
   schemas:
     ErrorResponse:
@@ -57,7 +66,10 @@ components:
                 - ROOM_NOT_FOUND
                 - SLOT_NOT_FOUND
                 - SLOT_ALREADY_BOOKED
+                - SLOT_NOT_BOOKED
                 - BOOKING_NOT_FOUND
+                - WAITLIST_NOT_FOUND
+                - WAITLIST_ALREADY_JOINED
                 - FORBIDDEN
                 - SCHEDULE_EXISTS
                 - INTERNAL_ERROR
@@ -198,6 +210,33 @@ components:
           format: uri
           nullable: true
         createdAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    WaitlistEntry:
+      type: object
+      required: [id, slotId, userId, status, position, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slotId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [active, notified, cancelled, expired]
+        position:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+        notifiedAt:
           type: string
           format: date-time
           nullable: true
@@ -765,6 +804,114 @@ paths:
                   message: cannot cancel another user's booking
         '404':
           description: Бронь не найдена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InternalErrorResponse' }
+
+  /waitlist/join:
+    post:
+      tags: [Waitlist]
+      summary: Встать в очередь ожидания на занятый слот (только user)
+      description: >
+        Доступно только роли user.
+        Пользователь может встать в очередь ожидания только для существующего и уже занятого слота.
+        Нельзя встать в очередь на прошлый слот или на слот своей активной брони.
+        Повторная попытка для того же пользователя и слота возвращает конфликт.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId]
+              properties:
+                slotId:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Пользователь добавлен в очередь ожидания
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entry:
+                    $ref: '#/components/schemas/WaitlistEntry'
+        '400':
+          description: Неверный формат запроса или бизнес-валидация (например, прошлый слот/своя бронь)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: Доступ запрещён (только user)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Слот не найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: Слот не занят или пользователь уже в очереди ожидания
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InternalErrorResponse' }
+
+  /waitlist/{waitlistId}/leave:
+    post:
+      tags: [Waitlist]
+      summary: Выйти из очереди ожидания (только своя запись, только user)
+      description: >
+        Доступно только роли user.
+        Операция идемпотентна для уже отменённой записи и возвращает актуальное состояние записи.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/WaitlistIdPath'
+      responses:
+        '200':
+          description: Запись очереди ожидания отменена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entry:
+                    $ref: '#/components/schemas/WaitlistEntry'
+        '400':
+          description: Неверный waitlistId
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: Доступ запрещён (только user)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Запись очереди ожидания не найдена (или не принадлежит пользователю)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

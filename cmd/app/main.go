@@ -23,6 +23,7 @@ import (
 	roomuc "booking-service/internal/usecase/room"
 	scheduleuc "booking-service/internal/usecase/schedule"
 	slotuc "booking-service/internal/usecase/slot"
+	waitlistuc "booking-service/internal/usecase/waitlist"
 
 	redis "github.com/redis/go-redis/v9"
 )
@@ -58,6 +59,7 @@ func main() {
 	scheduleRepo := postgres.NewScheduleRepo(dbPool)
 	slotRepo := postgres.NewSlotRepo(dbPool)
 	bookingRepo := postgres.NewBookingRepo(dbPool)
+	waitlistRepo := postgres.NewWaitlistRepo(dbPool)
 	txManager := postgres.NewTxManager(dbPool)
 
 	redisClient := redis.NewClient(&redis.Options{
@@ -83,7 +85,9 @@ func main() {
 	realtimeSubscriber := realtime.NewRedisSubscriber(redisClient, cfg.RedisChannel, realtimeHub)
 	wsHandler := realtime.NewWSHandler(realtimeHub, cfg.JWTSecret)
 	bookingService := bookinguc.NewService(txManager, bookingRepo, slotRepo, realtimePublisher).
+		WithWaitlistRepository(waitlistRepo).
 		WithMetrics(observabilitymetrics.NewBookingUsecaseMetrics())
+	waitlistService := waitlistuc.NewService(txManager, waitlistRepo, slotRepo, bookingRepo)
 
 	var backgroundWG sync.WaitGroup
 	subscriberErrCh := make(chan error, 1)
@@ -101,6 +105,7 @@ func main() {
 		ScheduleUC: scheduleuc.NewService(roomRepo, scheduleRepo),
 		SlotUC:     slotuc.NewService(roomRepo, slotRepo),
 		BookingUC:  bookingService,
+		WaitlistUC: waitlistService,
 		WSHandler:  wsHandler,
 		JWTSecret:  cfg.JWTSecret,
 	})

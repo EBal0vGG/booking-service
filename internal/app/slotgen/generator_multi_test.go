@@ -52,10 +52,10 @@ func TestGenerate_MultipleRoomsDifferentSchedules(t *testing.T) {
 	}
 
 	var (
-		byRoom     = map[uuid.UUID][]domain.Slot{}
-		flattened  []domain.Slot
-		expected1  = 2
-		expected2  = 2
+		byRoom    = map[uuid.UUID][]domain.Slot{}
+		flattened []domain.Slot
+		expected1 = 2
+		expected2 = 2
 	)
 	for _, b := range slots.batches {
 		flattened = append(flattened, b...)
@@ -170,9 +170,9 @@ func TestGenerate_InvalidTimeOfDayStartOrEndTimeFails(t *testing.T) {
 	now := time.Date(2025, 3, 24, 8, 0, 0, 0, time.UTC) // Monday
 
 	tests := []struct {
-		name       string
-		startTime  domain.TimeOfDay
-		endTime    domain.TimeOfDay
+		name      string
+		startTime domain.TimeOfDay
+		endTime   domain.TimeOfDay
 	}{
 		{name: "invalid_start", startTime: domain.TimeOfDay("not-a-time"), endTime: "10:00:00"},
 		{name: "invalid_end", startTime: "09:00:00", endTime: domain.TimeOfDay("bad")},
@@ -246,4 +246,3 @@ func TestGenerate_EndTimeLessOrEqualStartTimeProducesNoSlots(t *testing.T) {
 		t.Fatalf("expected no inserts when EndTime <= StartTime, got %d flush calls", len(slots.batches))
 	}
 }
-

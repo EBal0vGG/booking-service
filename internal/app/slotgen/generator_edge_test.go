@@ -18,7 +18,7 @@ func TestGenerate_LastStartAfterTargetProducesNoSlots(t *testing.T) {
 	schID := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbb1000")
 
 	now := time.Date(2025, 3, 24, 8, 0, 0, 0, time.UTC) // Mon
-	target := now.Add(1 * time.Hour)                     // 09:00
+	target := now.Add(1 * time.Hour)                    // 09:00
 	// lastStart already beyond target.
 	lastStart := target.Add(30 * time.Minute) // 09:30
 
@@ -245,4 +245,3 @@ func TestGenerate_ErrorStopsAfterFirstError(t *testing.T) {
 		t.Fatalf("expected no inserts after error, got %d flush calls", len(slots.batches))
 	}
 }
-

@@ -38,4 +38,3 @@ type ScheduleUsecase interface {
 	// It returns ScheduleView because input.daysOfWeek[] is expanded into multiple DB rows.
 	CreateSchedule(ctx context.Context, user domain.User, roomID uuid.UUID, input CreateScheduleInput) (ScheduleView, error)
 }
-

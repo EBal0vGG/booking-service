@@ -18,7 +18,7 @@ func TestRedisSubscriberHandleMessage_ValidEventBroadcastsToRoom(t *testing.T) {
 	hub.Subscribe(roomID, client)
 
 	subscriber := &RedisSubscriber{hub: hub}
-	event := NewEvent(EventTypeSlotBooked, roomID, uuid.New(), uuid.New(), time.Now().UTC())
+	event := NewRoomEvent(EventTypeSlotBooked, roomID, uuid.New(), uuid.New(), time.Now().UTC())
 	payload, err := json.Marshal(event)
 	require.NoError(t, err)
 
@@ -36,6 +36,36 @@ func TestRedisSubscriberHandleMessage_ValidEventBroadcastsToRoom(t *testing.T) {
 		require.Equal(t, event.Timestamp, msg.Timestamp)
 	default:
 		t.Fatal("expected broadcast payload for subscribed client")
+	}
+}
+
+func TestRedisSubscriberHandleMessage_UserTargetSendsToUser(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub()
+	userID := uuid.New()
+	client := &Client{
+		send: make(chan outboundMessage, 1),
+	}
+	hub.RegisterUser(userID, client)
+
+	subscriber := &RedisSubscriber{hub: hub}
+	event := NewUserEvent(EventTypeWaitlistSlotAvailable, uuid.New(), uuid.New(), userID, uuid.New(), time.Now().UTC())
+	payload, err := json.Marshal(event)
+	require.NoError(t, err)
+
+	err = subscriber.handleMessage(string(payload))
+	require.NoError(t, err)
+
+	select {
+	case outbound := <-client.send:
+		var msg ServerMessage
+		require.NoError(t, json.Unmarshal(outbound.payload, &msg))
+		require.Equal(t, MessageTypeWaitlistSlotAvailable, msg.Type)
+		require.Equal(t, event.UserID, msg.UserID)
+		require.Equal(t, event.WaitlistEntryID, msg.WaitlistEntryID)
+	default:
+		t.Fatal("expected user-target payload for registered user client")
 	}
 }
 
@@ -57,6 +87,7 @@ func TestRedisSubscriberHandleMessage_InvalidEvent(t *testing.T) {
 
 	event := Event{
 		Type:      EventTypeSlotReleased,
+		Target:    EventTargetRoom,
 		RoomID:    "invalid-room-id",
 		SlotID:    uuid.New().String(),
 		BookingID: uuid.New().String(),

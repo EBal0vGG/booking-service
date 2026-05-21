@@ -2,9 +2,11 @@ package booking
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"booking-service/internal/domain"
+	observabilitymetrics "booking-service/internal/observability/metrics"
 	"booking-service/internal/repository"
 	usecase "booking-service/internal/usecase"
 
@@ -12,17 +14,19 @@ import (
 )
 
 type Service struct {
-	tx       repository.TxManager
-	bookings repository.BookingRepository
-	slots    repository.SlotRepository
-	events   EventPublisher
-	metrics  BookingMetrics
-	now      func() time.Time
+	tx        repository.TxManager
+	bookings  repository.BookingRepository
+	slots     repository.SlotRepository
+	waitlists repository.WaitlistRepository
+	events    EventPublisher
+	metrics   BookingMetrics
+	now       func() time.Time
 }
 
 type EventPublisher interface {
 	SlotBooked(ctx context.Context, roomID, slotID, bookingID uuid.UUID)
 	SlotReleased(ctx context.Context, roomID, slotID, bookingID uuid.UUID)
+	WaitlistSlotAvailable(ctx context.Context, roomID, slotID, userID, waitlistEntryID uuid.UUID)
 }
 
 type BookingMetrics interface {
@@ -42,6 +46,10 @@ func (noopEventPublisher) SlotBooked(ctx context.Context, roomID, slotID, bookin
 
 func (noopEventPublisher) SlotReleased(ctx context.Context, roomID, slotID, bookingID uuid.UUID) {
 	_, _, _, _ = ctx, roomID, slotID, bookingID
+}
+
+func (noopEventPublisher) WaitlistSlotAvailable(ctx context.Context, roomID, slotID, userID, waitlistEntryID uuid.UUID) {
+	_, _, _, _, _ = ctx, roomID, slotID, userID, waitlistEntryID
 }
 
 func (noopBookingMetrics) IncBookingCreated()     {}
@@ -82,6 +90,11 @@ func NewService(
 		metrics:  noopBookingMetrics{},
 		now:      func() time.Time { return time.Now().UTC() },
 	}
+}
+
+func (s *Service) WithWaitlistRepository(waitlists repository.WaitlistRepository) *Service {
+	s.waitlists = waitlists
+	return s
 }
 
 func (s *Service) WithMetrics(metrics BookingMetrics) *Service {
@@ -164,6 +177,8 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 
 	var result domain.Booking
 	var roomID uuid.UUID
+	var slotReleased bool
+	var notifiedEntry *domain.WaitlistEntry
 	err := s.tx.WithinTransaction(ctx, func(txCtx context.Context) error {
 		existing, err := s.bookings.GetByID(txCtx, bookingID)
 		if err != nil {
@@ -175,6 +190,7 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 		if existing.UserID != user.ID {
 			return domain.NewDomainError(domain.ErrorForbidden, "cannot cancel another user's booking")
 		}
+		wasActive := existing.Status == domain.BookingStatusActive
 
 		updated, err := s.bookings.SetCancelled(txCtx, bookingID)
 		if err != nil {
@@ -190,6 +206,16 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 		if slot != nil {
 			roomID = slot.RoomID
 		}
+		if wasActive {
+			slotReleased = true
+			if s.waitlists != nil {
+				entry, err := s.waitlists.ClaimNextForNotify(txCtx, updated.SlotID)
+				if err != nil {
+					return domain.WrapDomainError(domain.ErrorInternalError, "claim waitlist entry", err)
+				}
+				notifiedEntry = entry
+			}
+		}
 		result = *updated
 		return nil
 	})
@@ -198,8 +224,28 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 		return domain.Booking{}, err
 	}
 	s.bookingMetrics().IncBookingCancelled()
-	if roomID != uuid.Nil {
+	if slotReleased && roomID != uuid.Nil {
 		s.eventPublisher().SlotReleased(ctx, roomID, result.SlotID, result.ID)
+		if notifiedEntry != nil {
+			observabilitymetrics.IncWaitlistNotification()
+			slog.Info(
+				"waitlist_notified",
+				"slot_id", notifiedEntry.SlotID,
+				"user_id", notifiedEntry.UserID,
+				"waitlist_entry_id", notifiedEntry.ID,
+				"position", notifiedEntry.Position,
+			)
+			s.eventPublisher().WaitlistSlotAvailable(ctx, roomID, result.SlotID, notifiedEntry.UserID, notifiedEntry.ID)
+		} else {
+			slog.Info(
+				"waitlist_skipped",
+				"slot_id", result.SlotID,
+				"user_id", uuid.Nil,
+				"waitlist_entry_id", uuid.Nil,
+				"position", 0,
+				"reason", "empty_queue",
+			)
+		}
 	}
 	return result, nil
 }

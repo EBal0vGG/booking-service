@@ -15,7 +15,10 @@ const (
 	ErrorRoomNotFound      ErrorCode = "ROOM_NOT_FOUND"
 	ErrorSlotNotFound      ErrorCode = "SLOT_NOT_FOUND"
 	ErrorSlotAlreadyBooked ErrorCode = "SLOT_ALREADY_BOOKED"
+	ErrorSlotNotBooked     ErrorCode = "SLOT_NOT_BOOKED"
 	ErrorBookingNotFound   ErrorCode = "BOOKING_NOT_FOUND"
+	ErrorWaitlistNotFound  ErrorCode = "WAITLIST_NOT_FOUND"
+	ErrorWaitlistJoined    ErrorCode = "WAITLIST_ALREADY_JOINED"
 	ErrorForbidden         ErrorCode = "FORBIDDEN"
 	ErrorScheduleExists    ErrorCode = "SCHEDULE_EXISTS"
 	ErrorInternalError     ErrorCode = "INTERNAL_ERROR"
@@ -64,4 +67,3 @@ func AsDomainError(err error) (*DomainError, bool) {
 	}
 	return nil, false
 }
-

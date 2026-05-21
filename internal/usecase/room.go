@@ -19,4 +19,3 @@ type RoomUsecase interface {
 	// Optionally useful for further stages.
 	// GetRoom(ctx context.Context, id uuid.UUID) (*domain.Room, error)
 }
-

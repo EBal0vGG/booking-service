@@ -27,8 +27,10 @@ type mockBookings struct {
 	createErr error
 	created   domain.Booking
 
-	getByID   *domain.Booking
-	cancelled *domain.Booking
+	getByID          *domain.Booking
+	cancelled        *domain.Booking
+	hasActiveBySlot  bool
+	hasActiveSlotErr error
 }
 
 func (m *mockBookings) Create(ctx context.Context, booking domain.Booking) error {
@@ -42,6 +44,23 @@ func (m *mockBookings) GetByID(ctx context.Context, id uuid.UUID) (*domain.Booki
 
 func (m *mockBookings) SetCancelled(ctx context.Context, id uuid.UUID) (*domain.Booking, error) {
 	return m.cancelled, nil
+}
+
+func (m *mockBookings) HasActiveBySlot(ctx context.Context, slotID uuid.UUID) (bool, error) {
+	if m.hasActiveSlotErr != nil {
+		return false, m.hasActiveSlotErr
+	}
+	return m.hasActiveBySlot, nil
+}
+
+func (m *mockBookings) GetActiveBySlotForUpdate(ctx context.Context, slotID uuid.UUID) (*domain.Booking, error) {
+	if m.hasActiveSlotErr != nil {
+		return nil, m.hasActiveSlotErr
+	}
+	if !m.hasActiveBySlot {
+		return nil, nil
+	}
+	return &domain.Booking{ID: uuid.New(), SlotID: slotID, Status: domain.BookingStatusActive}, nil
 }
 
 func (m *mockBookings) List(ctx context.Context, page, pageSize int) ([]domain.Booking, int, error) {
@@ -71,6 +90,45 @@ func (m *mockSlots) ListAvailableByRoomAndDate(ctx context.Context, roomID uuid.
 }
 
 var _ repository.SlotRepository = (*mockSlots)(nil)
+
+type mockWaitlists struct {
+	claimFn func(ctx context.Context, slotID uuid.UUID) (*domain.WaitlistEntry, error)
+}
+
+func (m *mockWaitlists) Join(ctx context.Context, entry domain.WaitlistEntry) (*domain.WaitlistEntry, error) {
+	return nil, nil
+}
+
+func (m *mockWaitlists) Leave(ctx context.Context, entryID, userID uuid.UUID) (*domain.WaitlistEntry, bool, error) {
+	return nil, false, nil
+}
+
+func (m *mockWaitlists) ClaimNextForNotify(ctx context.Context, slotID uuid.UUID) (*domain.WaitlistEntry, error) {
+	if m.claimFn != nil {
+		return m.claimFn(ctx, slotID)
+	}
+	return nil, nil
+}
+
+var _ repository.WaitlistRepository = (*mockWaitlists)(nil)
+
+type mockEventPublisher struct {
+	slotReleasedCalls int
+	waitlistCalls     int
+	lastWaitlistUser  uuid.UUID
+}
+
+func (m *mockEventPublisher) SlotBooked(ctx context.Context, roomID, slotID, bookingID uuid.UUID) {
+}
+
+func (m *mockEventPublisher) SlotReleased(ctx context.Context, roomID, slotID, bookingID uuid.UUID) {
+	m.slotReleasedCalls++
+}
+
+func (m *mockEventPublisher) WaitlistSlotAvailable(ctx context.Context, roomID, slotID, userID, waitlistEntryID uuid.UUID) {
+	m.waitlistCalls++
+	m.lastWaitlistUser = userID
+}
 
 func TestCreateBooking_ForbiddenForAdmin(t *testing.T) {
 	t.Parallel()
@@ -238,4 +296,90 @@ func TestCancelBooking_WrongUser(t *testing.T) {
 	de, ok := domain.AsDomainError(err)
 	require.True(t, ok)
 	require.Equal(t, domain.ErrorForbidden, de.Code)
+}
+
+func TestCancelBooking_ClaimsAndPublishesWaitlistNotification(t *testing.T) {
+	t.Parallel()
+
+	bookingID := uuid.New()
+	slotID := uuid.New()
+	userID := uuid.New()
+	roomID := uuid.New()
+	waitlistedUserID := uuid.New()
+	active := &domain.Booking{
+		ID:     bookingID,
+		UserID: userID,
+		SlotID: slotID,
+		Status: domain.BookingStatusActive,
+	}
+	cancelled := &domain.Booking{
+		ID:     bookingID,
+		UserID: userID,
+		SlotID: slotID,
+		Status: domain.BookingStatusCancelled,
+	}
+	publisher := &mockEventPublisher{}
+	svc := &Service{
+		tx:       &mockTx{},
+		bookings: &mockBookings{getByID: active, cancelled: cancelled},
+		slots: &mockSlots{
+			byID: &domain.Slot{ID: slotID, RoomID: roomID},
+		},
+		waitlists: &mockWaitlists{
+			claimFn: func(ctx context.Context, gotSlotID uuid.UUID) (*domain.WaitlistEntry, error) {
+				require.Equal(t, slotID, gotSlotID)
+				return &domain.WaitlistEntry{
+					ID:       uuid.New(),
+					SlotID:   slotID,
+					UserID:   waitlistedUserID,
+					Status:   domain.WaitlistStatusNotified,
+					Position: 1,
+				}, nil
+			},
+		},
+		events: publisher,
+	}
+
+	_, err := svc.CancelBooking(context.Background(), domain.User{ID: userID, Role: domain.RoleUser}, bookingID)
+	require.NoError(t, err)
+	require.Equal(t, 1, publisher.slotReleasedCalls)
+	require.Equal(t, 1, publisher.waitlistCalls)
+	require.Equal(t, waitlistedUserID, publisher.lastWaitlistUser)
+}
+
+func TestCancelBooking_AlreadyCancelledSkipsReleaseAndWaitlistClaim(t *testing.T) {
+	t.Parallel()
+
+	bookingID := uuid.New()
+	slotID := uuid.New()
+	userID := uuid.New()
+	roomID := uuid.New()
+	alreadyCancelled := &domain.Booking{
+		ID:     bookingID,
+		UserID: userID,
+		SlotID: slotID,
+		Status: domain.BookingStatusCancelled,
+	}
+	publisher := &mockEventPublisher{}
+	claimCalls := 0
+	svc := &Service{
+		tx:       &mockTx{},
+		bookings: &mockBookings{getByID: alreadyCancelled, cancelled: alreadyCancelled},
+		slots: &mockSlots{
+			byID: &domain.Slot{ID: slotID, RoomID: roomID},
+		},
+		waitlists: &mockWaitlists{
+			claimFn: func(ctx context.Context, slotID uuid.UUID) (*domain.WaitlistEntry, error) {
+				claimCalls++
+				return nil, nil
+			},
+		},
+		events: publisher,
+	}
+
+	_, err := svc.CancelBooking(context.Background(), domain.User{ID: userID, Role: domain.RoleUser}, bookingID)
+	require.NoError(t, err)
+	require.Equal(t, 0, claimCalls)
+	require.Equal(t, 0, publisher.slotReleasedCalls)
+	require.Equal(t, 0, publisher.waitlistCalls)
 }

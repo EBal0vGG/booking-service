@@ -108,12 +108,6 @@ func (s *RedisSubscriber) handleMessage(payload string) error {
 		return fmt.Errorf("invalid event: %w", err)
 	}
 
-	roomID, err := event.RoomUUID()
-	if err != nil {
-		observabilitymetrics.IncRedisRealtimeEventReceived(eventTypeLabel(event.Type), "error")
-		return fmt.Errorf("invalid room uuid: %w", err)
-	}
-
 	serverMessage := event.ToServerMessage()
 	outboundPayload, err := json.Marshal(serverMessage)
 	if err != nil {
@@ -121,7 +115,25 @@ func (s *RedisSubscriber) handleMessage(payload string) error {
 		return fmt.Errorf("marshal server message: %w", err)
 	}
 
-	s.hub.Broadcast(roomID, outboundPayload)
+	switch event.Target {
+	case EventTargetRoom:
+		roomID, err := event.RoomUUID()
+		if err != nil {
+			observabilitymetrics.IncRedisRealtimeEventReceived(eventTypeLabel(event.Type), "error")
+			return fmt.Errorf("invalid room uuid: %w", err)
+		}
+		s.hub.Broadcast(roomID, outboundPayload)
+	case EventTargetUser:
+		userID, err := event.UserUUID()
+		if err != nil {
+			observabilitymetrics.IncRedisRealtimeEventReceived(eventTypeLabel(event.Type), "error")
+			return fmt.Errorf("invalid user uuid: %w", err)
+		}
+		s.hub.SendToUser(userID, outboundPayload)
+	default:
+		observabilitymetrics.IncRedisRealtimeEventReceived(eventTypeLabel(event.Type), "error")
+		return fmt.Errorf("unsupported target: %s", event.Target)
+	}
 	observabilitymetrics.IncRedisRealtimeEventReceived(eventTypeLabel(event.Type), "success")
 	return nil
 }

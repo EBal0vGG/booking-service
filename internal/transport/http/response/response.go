@@ -57,9 +57,9 @@ func StatusFromDomainCode(code domain.ErrorCode) int {
 		return http.StatusUnauthorized
 	case domain.ErrorForbidden:
 		return http.StatusForbidden
-	case domain.ErrorNotFound, domain.ErrorRoomNotFound, domain.ErrorSlotNotFound, domain.ErrorBookingNotFound:
+	case domain.ErrorNotFound, domain.ErrorRoomNotFound, domain.ErrorSlotNotFound, domain.ErrorBookingNotFound, domain.ErrorWaitlistNotFound:
 		return http.StatusNotFound
-	case domain.ErrorSlotAlreadyBooked, domain.ErrorScheduleExists:
+	case domain.ErrorSlotAlreadyBooked, domain.ErrorScheduleExists, domain.ErrorWaitlistJoined, domain.ErrorSlotNotBooked:
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

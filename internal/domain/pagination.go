@@ -6,4 +6,3 @@ type Pagination struct {
 	PageSize int
 	Total    int
 }
-

@@ -60,4 +60,3 @@ func (s *Service) CreateRoom(ctx context.Context, user domain.User, input usecas
 
 	return room, nil
 }
-

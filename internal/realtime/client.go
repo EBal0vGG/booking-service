@@ -46,6 +46,7 @@ func NewClient(conn *websocket.Conn, hub *Hub, user domain.User) *Client {
 
 func (c *Client) Run() {
 	observabilitymetrics.IncWSConnections()
+	c.hub.RegisterUser(c.user.ID, c)
 	go c.writePump()
 	c.readPump()
 }
@@ -63,6 +64,7 @@ func (c *Client) Close() {
 
 		_ = c.conn.Close()
 		c.hub.UnsubscribeAll(c)
+		c.hub.UnregisterUser(c.user.ID, c)
 		close(c.send)
 	})
 }

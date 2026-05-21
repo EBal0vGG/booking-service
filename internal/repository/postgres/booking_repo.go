@@ -60,6 +60,47 @@ WHERE id = $1
 	return &b, nil
 }
 
+func (r *BookingRepo) HasActiveBySlot(ctx context.Context, slotID uuid.UUID) (bool, error) {
+	const q = `
+SELECT EXISTS(
+    SELECT 1
+    FROM bookings
+    WHERE slot_id = $1
+      AND status = 'active'
+)
+`
+	db := dbFromContext(ctx, r.pool)
+	var exists bool
+	if err := db.QueryRow(ctx, q, slotID).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (r *BookingRepo) GetActiveBySlotForUpdate(ctx context.Context, slotID uuid.UUID) (*domain.Booking, error) {
+	const q = `
+SELECT id, user_id, slot_id, status, conference_link, created_at
+FROM bookings
+WHERE slot_id = $1
+  AND status = 'active'
+FOR UPDATE
+`
+	db := dbFromContext(ctx, r.pool)
+	var b domain.Booking
+	var conferenceLink pgtype.Text
+	if err := db.QueryRow(ctx, q, slotID).Scan(&b.ID, &b.UserID, &b.SlotID, &b.Status, &conferenceLink, &b.CreatedAt); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if conferenceLink.Valid {
+		v := conferenceLink.String
+		b.ConferenceLink = &v
+	}
+	return &b, nil
+}
+
 func (r *BookingRepo) SetCancelled(ctx context.Context, id uuid.UUID) (*domain.Booking, error) {
 	const q = `
 UPDATE bookings
@@ -159,4 +200,3 @@ ORDER BY s.start_time ASC
 	}
 	return out, nil
 }
-

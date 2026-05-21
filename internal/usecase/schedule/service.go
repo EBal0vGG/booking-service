@@ -93,8 +93,8 @@ func (s *Service) CreateSchedule(
 	for _, day := range days {
 		rules = append(rules, usecase.ScheduleRule{
 			DayOfWeek: day,
-			StartTime:  input.StartTime,
-			EndTime:    input.EndTime,
+			StartTime: input.StartTime,
+			EndTime:   input.EndTime,
 		})
 		dbSchedules = append(dbSchedules, domain.Schedule{
 			ID:        uuid.New(),
@@ -158,4 +158,3 @@ func isScheduleConflictError(err error) bool {
 		strings.Contains(msg, "unique constraint") ||
 		strings.Contains(msg, "schedules_room_id_day_of_week_key")
 }
-

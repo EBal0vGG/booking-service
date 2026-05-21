@@ -66,6 +66,19 @@ var (
 		Name: "redis_realtime_subscriber_reconnects_total",
 		Help: "Total Redis realtime subscriber reconnect attempts.",
 	})
+
+	waitlistJoinedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "waitlist_joined_total",
+		Help: "Total successful waitlist joins.",
+	})
+	waitlistNotificationsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "waitlist_notifications_total",
+		Help: "Total waitlist notifications sent (active -> notified).",
+	})
+	waitlistCancelledTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "waitlist_cancelled_total",
+		Help: "Total waitlist leaves causing cancelled status.",
+	})
 )
 
 func ObserveHTTPRequest(method, path string, status int, duration time.Duration) {
@@ -132,6 +145,18 @@ func IncRedisRealtimeEventReceived(eventType, result string) {
 
 func IncRedisRealtimeSubscriberReconnect() {
 	redisRealtimeSubscriberReconnectsTotal.Inc()
+}
+
+func IncWaitlistJoined() {
+	waitlistJoinedTotal.Inc()
+}
+
+func IncWaitlistNotification() {
+	waitlistNotificationsTotal.Inc()
+}
+
+func IncWaitlistCancelled() {
+	waitlistCancelledTotal.Inc()
 }
 
 func sanitizeLabel(value, fallback string) string {

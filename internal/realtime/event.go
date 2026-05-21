@@ -8,23 +8,34 @@ import (
 )
 
 type EventType string
+type EventTarget string
 
 const (
-	EventTypeSlotBooked   EventType = "slot_booked"
-	EventTypeSlotReleased EventType = "slot_released"
+	EventTypeSlotBooked            EventType = "slot_booked"
+	EventTypeSlotReleased          EventType = "slot_released"
+	EventTypeWaitlistSlotAvailable EventType = "waitlist_slot_available"
+)
+
+const (
+	EventTargetRoom EventTarget = "room"
+	EventTargetUser EventTarget = "user"
 )
 
 type Event struct {
-	Type      EventType `json:"type"`
-	RoomID    string    `json:"roomId"`
-	SlotID    string    `json:"slotId"`
-	BookingID string    `json:"bookingId"`
-	Timestamp string    `json:"timestamp"`
+	Type            EventType   `json:"type"`
+	Target          EventTarget `json:"target"`
+	RoomID          string      `json:"roomId,omitempty"`
+	UserID          string      `json:"userId,omitempty"`
+	SlotID          string      `json:"slotId"`
+	BookingID       string      `json:"bookingId,omitempty"`
+	WaitlistEntryID string      `json:"waitlistEntryId,omitempty"`
+	Timestamp       string      `json:"timestamp"`
 }
 
-func NewEvent(eventType EventType, roomID, slotID, bookingID uuid.UUID, now time.Time) Event {
+func NewRoomEvent(eventType EventType, roomID, slotID, bookingID uuid.UUID, now time.Time) Event {
 	return Event{
 		Type:      eventType,
+		Target:    EventTargetRoom,
 		RoomID:    roomID.String(),
 		SlotID:    slotID.String(),
 		BookingID: bookingID.String(),
@@ -32,18 +43,45 @@ func NewEvent(eventType EventType, roomID, slotID, bookingID uuid.UUID, now time
 	}
 }
 
+func NewUserEvent(eventType EventType, roomID, slotID, userID, waitlistEntryID uuid.UUID, now time.Time) Event {
+	return Event{
+		Type:            eventType,
+		Target:          EventTargetUser,
+		RoomID:          roomID.String(),
+		UserID:          userID.String(),
+		SlotID:          slotID.String(),
+		WaitlistEntryID: waitlistEntryID.String(),
+		Timestamp:       now.UTC().Format(time.RFC3339),
+	}
+}
+
 func (e Event) Validate() error {
-	if e.Type != EventTypeSlotBooked && e.Type != EventTypeSlotReleased {
+	if e.Type != EventTypeSlotBooked && e.Type != EventTypeSlotReleased && e.Type != EventTypeWaitlistSlotAvailable {
 		return fmt.Errorf("unsupported event type: %s", e.Type)
+	}
+	if e.Target != EventTargetRoom && e.Target != EventTargetUser {
+		return fmt.Errorf("unsupported event target: %s", e.Target)
 	}
 	if _, err := e.RoomUUID(); err != nil {
 		return fmt.Errorf("invalid roomId: %w", err)
 	}
+	if e.Target == EventTargetUser {
+		if _, err := e.UserUUID(); err != nil {
+			return fmt.Errorf("invalid userId: %w", err)
+		}
+	}
 	if _, err := uuid.Parse(e.SlotID); err != nil {
 		return fmt.Errorf("invalid slotId: %w", err)
 	}
-	if _, err := uuid.Parse(e.BookingID); err != nil {
-		return fmt.Errorf("invalid bookingId: %w", err)
+	switch e.Type {
+	case EventTypeSlotBooked, EventTypeSlotReleased:
+		if _, err := uuid.Parse(e.BookingID); err != nil {
+			return fmt.Errorf("invalid bookingId: %w", err)
+		}
+	case EventTypeWaitlistSlotAvailable:
+		if _, err := uuid.Parse(e.WaitlistEntryID); err != nil {
+			return fmt.Errorf("invalid waitlistEntryId: %w", err)
+		}
 	}
 	if _, err := time.Parse(time.RFC3339, e.Timestamp); err != nil {
 		return fmt.Errorf("invalid timestamp: %w", err)
@@ -55,12 +93,18 @@ func (e Event) RoomUUID() (uuid.UUID, error) {
 	return uuid.Parse(e.RoomID)
 }
 
+func (e Event) UserUUID() (uuid.UUID, error) {
+	return uuid.Parse(e.UserID)
+}
+
 func (e Event) ToServerMessage() ServerMessage {
 	return ServerMessage{
-		Type:      MessageType(e.Type),
-		RoomID:    e.RoomID,
-		SlotID:    e.SlotID,
-		BookingID: e.BookingID,
-		Timestamp: e.Timestamp,
+		Type:            MessageType(e.Type),
+		RoomID:          e.RoomID,
+		UserID:          e.UserID,
+		SlotID:          e.SlotID,
+		BookingID:       e.BookingID,
+		WaitlistEntryID: e.WaitlistEntryID,
+		Timestamp:       e.Timestamp,
 	}
 }

@@ -100,4 +100,3 @@ func TestCreateSchedule_InvalidJSON_Returns400(t *testing.T) {
 	code := decodeErrorCode(t, rec)
 	require.Equal(t, string(domain.ErrorInvalidRequest), code)
 }
-

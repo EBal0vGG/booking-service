@@ -32,7 +32,7 @@ func (m *mockRoomRepo) List(ctx context.Context) ([]domain.Room, error) { return
 var _ bookingRepo.RoomRepository = (*mockRoomRepo)(nil)
 
 type mockScheduleRepo struct {
-	exists   bool
+	exists    bool
 	existsErr error
 	createErr error
 }

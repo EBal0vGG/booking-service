@@ -39,6 +39,8 @@ type SlotRepository interface {
 type BookingRepository interface {
 	Create(ctx context.Context, booking domain.Booking) error
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Booking, error)
+	HasActiveBySlot(ctx context.Context, slotID uuid.UUID) (bool, error)
+	GetActiveBySlotForUpdate(ctx context.Context, slotID uuid.UUID) (*domain.Booking, error)
 	// SetCancelled is idempotent:
 	// - if booking is active -> mark cancelled and return updated row
 	// - if booking is already cancelled -> return current row unchanged
@@ -48,4 +50,10 @@ type BookingRepository interface {
 	List(ctx context.Context, page, pageSize int) ([]domain.Booking, int, error)
 	// ListFutureByUser returns only future bookings (slot.start >= now), owned by user.
 	ListFutureByUser(ctx context.Context, userID uuid.UUID, now time.Time) ([]domain.Booking, error)
+}
+
+type WaitlistRepository interface {
+	Join(ctx context.Context, entry domain.WaitlistEntry) (*domain.WaitlistEntry, error)
+	Leave(ctx context.Context, entryID, userID uuid.UUID) (*domain.WaitlistEntry, bool, error)
+	ClaimNextForNotify(ctx context.Context, slotID uuid.UUID) (*domain.WaitlistEntry, error)
 }

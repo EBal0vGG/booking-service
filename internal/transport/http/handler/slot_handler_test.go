@@ -94,4 +94,3 @@ func TestListAvailableSlots_MissingDate_Returns400(t *testing.T) {
 	code := decodeErrorCode(t, rec)
 	require.Equal(t, string(domain.ErrorInvalidRequest), code)
 }
-

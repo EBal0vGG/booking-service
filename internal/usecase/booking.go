@@ -35,4 +35,3 @@ type BookingUsecase interface {
 	// Must be implemented via SetCancelled(...) in repository (transaction).
 	CancelBooking(ctx context.Context, user domain.User, bookingID uuid.UUID) (domain.Booking, error)
 }
-

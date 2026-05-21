@@ -150,4 +150,3 @@ func TestCancelBooking_HappyPath(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 	require.Equal(t, bookingID.String(), out.Booking.ID)
 }
-

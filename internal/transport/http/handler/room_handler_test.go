@@ -158,4 +158,3 @@ func TestListRooms_UsecaseNil_Returns500(t *testing.T) {
 	code := decodeErrorCode(t, rec)
 	require.Equal(t, string(domain.ErrorInternalError), code)
 }
-

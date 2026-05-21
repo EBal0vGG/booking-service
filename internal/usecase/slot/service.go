@@ -42,4 +42,3 @@ func (s *Service) ListAvailableSlots(ctx context.Context, user domain.User, room
 
 	return s.slots.ListAvailableByRoomAndDate(ctx, roomID, dateUTC)
 }
-

@@ -27,26 +27,29 @@ func NewRedisPublisher(client redis.UniversalClient, channel string) *RedisPubli
 }
 
 func (p *RedisPublisher) SlotBooked(ctx context.Context, roomID, slotID, bookingID uuid.UUID) {
-	p.publish(ctx, EventTypeSlotBooked, roomID, slotID, bookingID)
+	p.publishEvent(ctx, NewRoomEvent(EventTypeSlotBooked, roomID, slotID, bookingID, time.Now().UTC()))
 }
 
 func (p *RedisPublisher) SlotReleased(ctx context.Context, roomID, slotID, bookingID uuid.UUID) {
-	p.publish(ctx, EventTypeSlotReleased, roomID, slotID, bookingID)
+	p.publishEvent(ctx, NewRoomEvent(EventTypeSlotReleased, roomID, slotID, bookingID, time.Now().UTC()))
 }
 
-func (p *RedisPublisher) publish(ctx context.Context, eventType EventType, roomID, slotID, bookingID uuid.UUID) {
+func (p *RedisPublisher) WaitlistSlotAvailable(ctx context.Context, roomID, slotID, userID, waitlistEntryID uuid.UUID) {
+	p.publishEvent(ctx, NewUserEvent(EventTypeWaitlistSlotAvailable, roomID, slotID, userID, waitlistEntryID, time.Now().UTC()))
+}
+
+func (p *RedisPublisher) publishEvent(ctx context.Context, event Event) {
 	_ = ctx // publish is intentionally decoupled from request lifecycle (best-effort realtime).
 
 	if p == nil || p.client == nil {
 		return
 	}
 	if p.channel == "" {
-		observabilitymetrics.IncRedisRealtimePublish(string(eventType), "error")
-		slog.Warn("realtime redis publish skipped: empty channel", "event_type", eventType)
+		observabilitymetrics.IncRedisRealtimePublish(string(event.Type), "error")
+		slog.Warn("realtime redis publish skipped: empty channel", "event_type", event.Type, "target", event.Target)
 		return
 	}
 
-	event := NewEvent(eventType, roomID, slotID, bookingID, time.Now().UTC())
 	payload, err := json.Marshal(event)
 	if err != nil {
 		observabilitymetrics.IncRedisRealtimePublish(string(event.Type), "error")
@@ -60,7 +63,15 @@ func (p *RedisPublisher) publish(ctx context.Context, eventType EventType, roomI
 	if err := p.client.Publish(publishCtx, p.channel, payload).Err(); err != nil {
 		// Best-effort delivery: booking/cancel must not fail because of realtime transport issues.
 		observabilitymetrics.IncRedisRealtimePublish(string(event.Type), "error")
-		slog.Warn("realtime redis publish error", "channel", p.channel, "event_type", event.Type, "room_id", event.RoomID, "error", err)
+		slog.Warn(
+			"realtime redis publish error",
+			"channel", p.channel,
+			"event_type", event.Type,
+			"target", event.Target,
+			"room_id", event.RoomID,
+			"user_id", event.UserID,
+			"error", err,
+		)
 		return
 	}
 	observabilitymetrics.IncRedisRealtimePublish(string(event.Type), "success")

@@ -162,4 +162,3 @@ func TestCreateRoom_InvalidRequest_NegativeCapacity(t *testing.T) {
 	require.Equal(t, domain.ErrorInvalidRequest, de.Code)
 	require.False(t, repo.createCalled)
 }
-

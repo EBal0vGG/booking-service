@@ -10,11 +10,13 @@ import (
 type Hub struct {
 	mu    sync.RWMutex
 	rooms map[uuid.UUID]map[*Client]struct{}
+	users map[uuid.UUID]map[*Client]struct{}
 }
 
 func NewHub() *Hub {
 	return &Hub{
 		rooms: make(map[uuid.UUID]map[*Client]struct{}),
+		users: make(map[uuid.UUID]map[*Client]struct{}),
 	}
 }
 
@@ -56,6 +58,32 @@ func (h *Hub) UnsubscribeAll(c *Client) {
 	}
 }
 
+func (h *Hub) RegisterUser(userID uuid.UUID, c *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	clients, ok := h.users[userID]
+	if !ok {
+		clients = make(map[*Client]struct{})
+		h.users[userID] = clients
+	}
+	clients[c] = struct{}{}
+}
+
+func (h *Hub) UnregisterUser(userID uuid.UUID, c *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	clients, ok := h.users[userID]
+	if !ok {
+		return
+	}
+	delete(clients, c)
+	if len(clients) == 0 {
+		delete(h.users, userID)
+	}
+}
+
 func (h *Hub) Broadcast(roomID uuid.UUID, payload []byte) {
 	h.mu.RLock()
 	clientsMap := h.rooms[roomID]
@@ -74,6 +102,27 @@ func (h *Hub) Broadcast(roomID uuid.UUID, payload []byte) {
 	}
 
 	// Disconnect slow consumers to avoid global backpressure.
+	for _, c := range slow {
+		c.Close()
+	}
+}
+
+func (h *Hub) SendToUser(userID uuid.UUID, payload []byte) {
+	h.mu.RLock()
+	clientsMap := h.users[userID]
+	clients := make([]*Client, 0, len(clientsMap))
+	for c := range clientsMap {
+		clients = append(clients, c)
+	}
+	h.mu.RUnlock()
+
+	messageType := extractMessageType(payload)
+	slow := make([]*Client, 0)
+	for _, c := range clients {
+		if !c.enqueue(payload, messageType) {
+			slow = append(slow, c)
+		}
+	}
 	for _, c := range slow {
 		c.Close()
 	}

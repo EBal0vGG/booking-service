@@ -16,4 +16,3 @@ type SlotUsecase interface {
 	// date must represent the UTC calendar date (YYYY-MM-DD) for the requested window.
 	ListAvailableSlots(ctx context.Context, user domain.User, roomID uuid.UUID, date time.Time) ([]domain.Slot, error)
 }
-

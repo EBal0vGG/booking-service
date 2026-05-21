@@ -25,3 +25,5 @@ vendor/
 .vscode/
 
 .DS_Store
+
+handoff.md

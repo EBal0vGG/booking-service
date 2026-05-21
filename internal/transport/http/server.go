@@ -25,6 +25,7 @@ type RouterDependencies struct {
 	ScheduleUC usecase.ScheduleUsecase
 	SlotUC     usecase.SlotUsecase
 	BookingUC  usecase.BookingUsecase
+	WaitlistUC usecase.WaitlistUsecase
 	WSHandler  http.Handler
 	JWTSecret  string
 }
@@ -43,6 +44,7 @@ func registerRoutes(r chi.Router, deps RouterDependencies) {
 	scheduleHandler := handler.NewScheduleHandler(deps.ScheduleUC)
 	slotHandler := handler.NewSlotHandler(deps.SlotUC)
 	bookingHandler := handler.NewBookingHandler(deps.BookingUC)
+	waitlistHandler := handler.NewWaitlistHandler(deps.WaitlistUC)
 
 	r.Use(authmw.RequestID)
 	r.Use(authmw.Recovery)
@@ -77,5 +79,8 @@ func registerRoutes(r chi.Router, deps RouterDependencies) {
 		pr.Get("/bookings/list", bookingHandler.ListBookings)
 		pr.Get("/bookings/my", bookingHandler.ListMyBookings)
 		pr.Post("/bookings/{bookingId}/cancel", bookingHandler.CancelBooking)
+
+		pr.Post("/waitlist/join", waitlistHandler.JoinWaitlist)
+		pr.Post("/waitlist/{waitlistId}/leave", waitlistHandler.LeaveWaitlist)
 	})
 }

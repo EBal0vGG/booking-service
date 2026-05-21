@@ -14,13 +14,15 @@ import (
 	"booking-service/internal/app/slotgen"
 	"booking-service/internal/domain"
 	"booking-service/internal/repository/postgres"
+	usecase "booking-service/internal/usecase"
 	bookinguc "booking-service/internal/usecase/booking"
 	roomuc "booking-service/internal/usecase/room"
 	scheduleuc "booking-service/internal/usecase/schedule"
 	slotuc "booking-service/internal/usecase/slot"
-	usecase "booking-service/internal/usecase"
+	waitlistuc "booking-service/internal/usecase/waitlist"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
@@ -75,6 +77,7 @@ func isoWeekdayUTC(t time.Time) int {
 func cleanTables(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(ctx, `
+DELETE FROM waitlist_entries;
 DELETE FROM bookings;
 DELETE FROM slots;
 DELETE FROM schedules;
@@ -226,6 +229,71 @@ func TestIntegration_DoubleBookSameSlot(t *testing.T) {
 	de, ok := domain.AsDomainError(err)
 	require.True(t, ok)
 	require.Equal(t, domain.ErrorSlotAlreadyBooked, de.Code)
+}
+
+func TestIntegration_WaitlistFlowCancelMarksEntryNotified(t *testing.T) {
+	ctx := context.Background()
+	pool := setupPool(t)
+
+	roomRepo := postgres.NewRoomRepo(pool)
+	scheduleRepo := postgres.NewScheduleRepo(pool)
+	slotRepo := postgres.NewSlotRepo(pool)
+	bookingRepo := postgres.NewBookingRepo(pool)
+	waitlistRepo := postgres.NewWaitlistRepo(pool)
+	txm := postgres.NewTxManager(pool)
+
+	roomSvc := roomuc.NewService(roomRepo)
+	scheduleSvc := scheduleuc.NewService(roomRepo, scheduleRepo)
+	slotSvc := slotuc.NewService(roomRepo, slotRepo)
+	bookingSvc := bookinguc.NewService(txm, bookingRepo, slotRepo).WithWaitlistRepository(waitlistRepo)
+	waitlistSvc := waitlistuc.NewService(txm, waitlistRepo, slotRepo, bookingRepo)
+	gen := slotgen.NewGenerator(roomRepo, scheduleRepo, slotRepo)
+
+	admin := domain.User{ID: adminID, Role: domain.RoleAdmin, Email: ""}
+	userA := domain.User{ID: userID, Role: domain.RoleUser, Email: ""}
+	userBID := uuid.New()
+	insertWaitlistUsers(ctx, t, pool, []uuid.UUID{userBID})
+	userB := domain.User{ID: userBID, Role: domain.RoleUser, Email: ""}
+
+	room, err := roomSvc.CreateRoom(ctx, admin, usecase.RoomCreateInput{Name: "integration-room-waitlist-flow"})
+	require.NoError(t, err)
+
+	nextDay := time.Now().UTC().Add(48 * time.Hour)
+	listDate := time.Date(nextDay.Year(), nextDay.Month(), nextDay.Day(), 0, 0, 0, 0, time.UTC)
+	dow := isoWeekdayUTC(listDate)
+
+	_, err = scheduleSvc.CreateSchedule(ctx, admin, room.ID, usecase.CreateScheduleInput{
+		DaysOfWeek: []int{dow},
+		StartTime:  "10:00",
+		EndTime:    "11:00",
+	})
+	require.NoError(t, err)
+	require.NoError(t, gen.Generate(ctx))
+
+	slots, err := slotSvc.ListAvailableSlots(ctx, userA, room.ID, listDate)
+	require.NoError(t, err)
+	require.NotEmpty(t, slots)
+	slotID := slots[0].ID
+
+	booking, err := bookingSvc.CreateBooking(ctx, userA, slotID, false)
+	require.NoError(t, err)
+
+	entry, err := waitlistSvc.JoinWaitlist(ctx, userB, slotID)
+	require.NoError(t, err)
+
+	_, err = bookingSvc.CancelBooking(ctx, userA, booking.ID)
+	require.NoError(t, err)
+
+	var status string
+	var notifiedAt pgtype.Timestamptz
+	err = pool.QueryRow(ctx, `
+SELECT status, notified_at
+FROM waitlist_entries
+WHERE id = $1
+`, entry.ID).Scan(&status, &notifiedAt)
+	require.NoError(t, err)
+	require.Equal(t, string(domain.WaitlistStatusNotified), status)
+	require.True(t, notifiedAt.Valid)
 }
 
 func containsSlotID(slots []domain.Slot, id uuid.UUID) bool {
