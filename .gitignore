@@ -16,9 +16,12 @@ profile.cov
 
 # Dependency directories (remove the comment below to include it)
 vendor/
+node_modules/
 
 # env file
 .env
+.env.local
+.env.*.local
 
 # Editor/IDE
 .idea/
@@ -26,4 +29,18 @@ vendor/
 
 .DS_Store
 
+# Frontend build/runtime artifacts
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+frontend/coverage/
+frontend/.turbo/
+frontend/.cache/
+frontend/.vercel/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnpm-debug.log*
+
+# Local helper/output files
 handoff.md

@@ -32,6 +32,7 @@ type ScheduleRepository interface {
 // SlotRepository provides read access to generated slots and available-slot queries.
 type SlotRepository interface {
 	ListAvailableByRoomAndDate(ctx context.Context, roomID uuid.UUID, date time.Time) ([]domain.Slot, error)
+	ListAllByRoomAndDate(ctx context.Context, roomID uuid.UUID, date time.Time, now time.Time) ([]domain.SlotView, error)
 	GetByID(ctx context.Context, slotID uuid.UUID) (*domain.Slot, error)
 }
 
@@ -56,4 +57,16 @@ type WaitlistRepository interface {
 	Join(ctx context.Context, entry domain.WaitlistEntry) (*domain.WaitlistEntry, error)
 	Leave(ctx context.Context, entryID, userID uuid.UUID) (*domain.WaitlistEntry, bool, error)
 	ClaimNextForNotify(ctx context.Context, slotID uuid.UUID) (*domain.WaitlistEntry, error)
+}
+
+type ReservationRepository interface {
+	Create(ctx context.Context, reservation domain.SlotReservation) (*domain.SlotReservation, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.SlotReservation, error)
+	GetByIDForUpdate(ctx context.Context, id uuid.UUID) (*domain.SlotReservation, error)
+	ListActiveByUser(ctx context.Context, userID uuid.UUID, now time.Time) ([]domain.SlotReservation, error)
+	GetActiveBySlot(ctx context.Context, slotID uuid.UUID) (*domain.SlotReservation, error)
+	GetActiveBySlotForUpdate(ctx context.Context, slotID uuid.UUID) (*domain.SlotReservation, error)
+	SetConfirmed(ctx context.Context, id uuid.UUID, confirmedAt time.Time) (*domain.SlotReservation, error)
+	SetCancelled(ctx context.Context, id uuid.UUID) (*domain.SlotReservation, error)
+	ExpireBatch(ctx context.Context, now time.Time, limit int) ([]domain.SlotReservation, error)
 }

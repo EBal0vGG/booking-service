@@ -34,8 +34,44 @@ func (p *RedisPublisher) SlotReleased(ctx context.Context, roomID, slotID, booki
 	p.publishEvent(ctx, NewRoomEvent(EventTypeSlotReleased, roomID, slotID, bookingID, time.Now().UTC()))
 }
 
+func (p *RedisPublisher) SlotAvailable(ctx context.Context, roomID, slotID uuid.UUID) {
+	p.publishEvent(ctx, NewSlotAvailableEvent(roomID, slotID, time.Now().UTC()))
+}
+
+func (p *RedisPublisher) SlotReserved(ctx context.Context, roomID, slotID, reservationID uuid.UUID) {
+	p.publishEvent(ctx, NewReservationRoomEvent(EventTypeSlotReserved, roomID, slotID, reservationID, time.Now().UTC()))
+}
+
+func (p *RedisPublisher) SlotReservationExpired(ctx context.Context, roomID, slotID, reservationID uuid.UUID) {
+	p.publishEvent(ctx, NewReservationRoomEvent(EventTypeSlotReservationExpired, roomID, slotID, reservationID, time.Now().UTC()))
+}
+
 func (p *RedisPublisher) WaitlistSlotAvailable(ctx context.Context, roomID, slotID, userID, waitlistEntryID uuid.UUID) {
 	p.publishEvent(ctx, NewUserEvent(EventTypeWaitlistSlotAvailable, roomID, slotID, userID, waitlistEntryID, time.Now().UTC()))
+}
+
+func (p *RedisPublisher) WaitlistSlotReserved(
+	ctx context.Context,
+	roomID, slotID, userID, reservationID, waitlistEntryID uuid.UUID,
+	expiresAt time.Time,
+) {
+	p.publishEvent(
+		ctx,
+		NewWaitlistReservationEvent(
+			EventTypeWaitlistSlotReserved,
+			roomID,
+			slotID,
+			userID,
+			reservationID,
+			waitlistEntryID,
+			expiresAt,
+			time.Now().UTC(),
+		),
+	)
+}
+
+func (p *RedisPublisher) ReservationExpired(ctx context.Context, roomID, slotID, userID, reservationID uuid.UUID) {
+	p.publishEvent(ctx, NewReservationExpiredEvent(EventTypeReservationExpired, roomID, slotID, userID, reservationID, time.Now().UTC()))
 }
 
 func (p *RedisPublisher) publishEvent(ctx context.Context, event Event) {

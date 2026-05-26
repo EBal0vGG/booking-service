@@ -50,6 +50,10 @@ func (m mockSlotRepo) ListAvailableByRoomAndDate(ctx context.Context, roomID uui
 	return nil, nil
 }
 
+func (m mockSlotRepo) ListAllByRoomAndDate(ctx context.Context, roomID uuid.UUID, date time.Time, now time.Time) ([]domain.SlotView, error) {
+	return nil, nil
+}
+
 func (m mockSlotRepo) GetByID(ctx context.Context, slotID uuid.UUID) (*domain.Slot, error) {
 	if m.err != nil {
 		return nil, m.err

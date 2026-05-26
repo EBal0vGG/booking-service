@@ -20,14 +20,16 @@ func NewServer(port string, handler http.Handler) *http.Server {
 }
 
 type RouterDependencies struct {
-	AuthUC     usecase.AuthUsecase
-	RoomUC     usecase.RoomUsecase
-	ScheduleUC usecase.ScheduleUsecase
-	SlotUC     usecase.SlotUsecase
-	BookingUC  usecase.BookingUsecase
-	WaitlistUC usecase.WaitlistUsecase
-	WSHandler  http.Handler
-	JWTSecret  string
+	AuthUC        usecase.AuthUsecase
+	RoomUC        usecase.RoomUsecase
+	ScheduleUC    usecase.ScheduleUsecase
+	SlotUC        usecase.SlotUsecase
+	BookingUC     usecase.BookingUsecase
+	WaitlistUC    usecase.WaitlistUsecase
+	ReservationUC usecase.ReservationUsecase
+	WSHandler     http.Handler
+	JWTSecret     string
+	CORSOrigins   []string
 }
 
 func NewRouterWithDependencies(deps RouterDependencies) chi.Router {
@@ -45,10 +47,12 @@ func registerRoutes(r chi.Router, deps RouterDependencies) {
 	slotHandler := handler.NewSlotHandler(deps.SlotUC)
 	bookingHandler := handler.NewBookingHandler(deps.BookingUC)
 	waitlistHandler := handler.NewWaitlistHandler(deps.WaitlistUC)
+	reservationHandler := handler.NewReservationHandler(deps.ReservationUC)
 
 	r.Use(authmw.RequestID)
 	r.Use(authmw.Recovery)
 	r.Use(authmw.HTTPMetrics)
+	r.Use(authmw.CORS(deps.CORSOrigins))
 
 	r.Group(func(pub chi.Router) {
 		pub.Use(authmw.RequestLogger)
@@ -74,6 +78,7 @@ func registerRoutes(r chi.Router, deps RouterDependencies) {
 		pr.Post("/rooms/create", roomHandler.CreateRoom)
 		pr.Post("/rooms/{roomId}/schedule/create", scheduleHandler.CreateSchedule)
 		pr.Get("/rooms/{roomId}/slots/list", slotHandler.ListAvailableSlots)
+		pr.Get("/rooms/{roomId}/slots/all", slotHandler.ListRoomSlots)
 
 		pr.Post("/bookings/create", bookingHandler.CreateBooking)
 		pr.Get("/bookings/list", bookingHandler.ListBookings)
@@ -82,5 +87,8 @@ func registerRoutes(r chi.Router, deps RouterDependencies) {
 
 		pr.Post("/waitlist/join", waitlistHandler.JoinWaitlist)
 		pr.Post("/waitlist/{waitlistId}/leave", waitlistHandler.LeaveWaitlist)
+		pr.Get("/reservations/my/active", reservationHandler.ListMyActiveReservations)
+		pr.Post("/reservations/{reservationId}/confirm", reservationHandler.ConfirmReservation)
+		pr.Post("/reservations/{reservationId}/cancel", reservationHandler.CancelReservation)
 	})
 }

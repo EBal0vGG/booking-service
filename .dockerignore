@@ -1,0 +1,24 @@
+# Frontend (separate Docker build context)
+frontend/node_modules
+frontend/.next
+frontend/out
+frontend/coverage
+frontend/.turbo
+frontend/.cache
+frontend/.vercel
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnpm-debug.log*
+frontend/.env*
+
+# VCS / editor
+.git
+.idea
+.vscode
+.DS_Store
+
+# Local artifacts
+*.out
+coverage.*
+handoff.md

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"booking-service/internal/domain"
@@ -42,10 +43,13 @@ SELECT s.id, s.room_id, s.start_time, s.end_time, s.created_at
 FROM slots s
 LEFT JOIN bookings b
   ON b.slot_id = s.id AND b.status = 'active'
+LEFT JOIN slot_reservations r
+  ON r.slot_id = s.id AND r.status = 'active'
 WHERE s.room_id = $1
   AND s.start_time >= $2
   AND s.start_time < $2 + INTERVAL '1 day'
   AND b.id IS NULL
+  AND r.id IS NULL
 ORDER BY s.start_time
 `
 	db := dbFromContext(ctx, r.pool)
@@ -66,6 +70,74 @@ ORDER BY s.start_time
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	return out, nil
+}
+
+func (r *SlotRepo) ListAllByRoomAndDate(ctx context.Context, roomID uuid.UUID, date time.Time, now time.Time) ([]domain.SlotView, error) {
+	const q = `
+SELECT
+  s.id,
+  s.room_id,
+  s.start_time,
+  s.end_time,
+  CASE
+    WHEN s.start_time < $3 THEN 'past'
+    WHEN b.id IS NOT NULL THEN 'booked'
+    WHEN r.id IS NOT NULL THEN 'reserved'
+    ELSE 'available'
+  END AS status,
+  b.id AS booking_id,
+  r.id AS reservation_id,
+  r.waitlist_entry_id
+FROM slots s
+LEFT JOIN bookings b
+  ON b.slot_id = s.id AND b.status = 'active'
+LEFT JOIN slot_reservations r
+  ON r.slot_id = s.id AND r.status = 'active'
+WHERE s.room_id = $1
+  AND s.start_time >= $2
+  AND s.start_time < $2 + INTERVAL '1 day'
+ORDER BY s.start_time
+`
+	db := dbFromContext(ctx, r.pool)
+	rows, err := db.Query(ctx, q, roomID, date.UTC(), now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.SlotView, 0)
+	for rows.Next() {
+		var (
+			slot      domain.SlotView
+			statusRaw string
+		)
+		if err := rows.Scan(
+			&slot.ID,
+			&slot.RoomID,
+			&slot.StartTime,
+			&slot.EndTime,
+			&statusRaw,
+			&slot.BookingID,
+			&slot.ReservationID,
+			&slot.WaitlistEntryID,
+		); err != nil {
+			return nil, err
+		}
+
+		slot.Status = domain.SlotStatus(statusRaw)
+		switch slot.Status {
+		case domain.SlotStatusAvailable, domain.SlotStatusBooked, domain.SlotStatusReserved, domain.SlotStatusPast:
+		default:
+			return nil, fmt.Errorf("unknown slot status: %s", statusRaw)
+		}
+
+		out = append(out, slot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return out, nil
 }
 

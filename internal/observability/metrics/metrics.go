@@ -79,6 +79,22 @@ var (
 		Name: "waitlist_cancelled_total",
 		Help: "Total waitlist leaves causing cancelled status.",
 	})
+	reservationsCreatedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "reservations_created_total",
+		Help: "Total temporary reservations created.",
+	})
+	reservationsConfirmedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "reservations_confirmed_total",
+		Help: "Total temporary reservations confirmed.",
+	})
+	reservationsExpiredTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "reservations_expired_total",
+		Help: "Total temporary reservations expired.",
+	})
+	reservationsCancelledTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "reservations_cancelled_total",
+		Help: "Total temporary reservations cancelled.",
+	})
 )
 
 func ObserveHTTPRequest(method, path string, status int, duration time.Duration) {
@@ -88,9 +104,14 @@ func ObserveHTTPRequest(method, path string, status int, duration time.Duration)
 }
 
 type BookingUsecaseMetrics struct{}
+type ReservationUsecaseMetrics struct{}
 
 func NewBookingUsecaseMetrics() *BookingUsecaseMetrics {
 	return &BookingUsecaseMetrics{}
+}
+
+func NewReservationUsecaseMetrics() *ReservationUsecaseMetrics {
+	return &ReservationUsecaseMetrics{}
 }
 
 func (BookingUsecaseMetrics) IncBookingCreated() {
@@ -157,6 +178,38 @@ func IncWaitlistNotification() {
 
 func IncWaitlistCancelled() {
 	waitlistCancelledTotal.Inc()
+}
+
+func IncReservationCreated() {
+	reservationsCreatedTotal.Inc()
+}
+
+func IncReservationConfirmed() {
+	reservationsConfirmedTotal.Inc()
+}
+
+func IncReservationExpired() {
+	reservationsExpiredTotal.Inc()
+}
+
+func IncReservationCancelled() {
+	reservationsCancelledTotal.Inc()
+}
+
+func (ReservationUsecaseMetrics) IncReservationCreated() {
+	IncReservationCreated()
+}
+
+func (ReservationUsecaseMetrics) IncReservationConfirmed() {
+	IncReservationConfirmed()
+}
+
+func (ReservationUsecaseMetrics) IncReservationExpired() {
+	IncReservationExpired()
+}
+
+func (ReservationUsecaseMetrics) IncReservationCancelled() {
+	IncReservationCancelled()
 }
 
 func sanitizeLabel(value, fallback string) string {

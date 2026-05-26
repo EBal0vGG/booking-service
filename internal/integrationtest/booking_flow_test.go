@@ -16,6 +16,7 @@ import (
 	"booking-service/internal/repository/postgres"
 	usecase "booking-service/internal/usecase"
 	bookinguc "booking-service/internal/usecase/booking"
+	reservationuc "booking-service/internal/usecase/reservation"
 	roomuc "booking-service/internal/usecase/room"
 	scheduleuc "booking-service/internal/usecase/schedule"
 	slotuc "booking-service/internal/usecase/slot"
@@ -77,6 +78,7 @@ func isoWeekdayUTC(t time.Time) int {
 func cleanTables(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(ctx, `
+DELETE FROM slot_reservations;
 DELETE FROM waitlist_entries;
 DELETE FROM bookings;
 DELETE FROM slots;
@@ -240,13 +242,17 @@ func TestIntegration_WaitlistFlowCancelMarksEntryNotified(t *testing.T) {
 	slotRepo := postgres.NewSlotRepo(pool)
 	bookingRepo := postgres.NewBookingRepo(pool)
 	waitlistRepo := postgres.NewWaitlistRepo(pool)
+	reservationRepo := postgres.NewReservationRepo(pool)
 	txm := postgres.NewTxManager(pool)
 
 	roomSvc := roomuc.NewService(roomRepo)
 	scheduleSvc := scheduleuc.NewService(roomRepo, scheduleRepo)
 	slotSvc := slotuc.NewService(roomRepo, slotRepo)
-	bookingSvc := bookinguc.NewService(txm, bookingRepo, slotRepo).WithWaitlistRepository(waitlistRepo)
+	bookingSvc := bookinguc.NewService(txm, bookingRepo, slotRepo).
+		WithWaitlistRepository(waitlistRepo).
+		WithReservationRepository(reservationRepo, 5*time.Minute)
 	waitlistSvc := waitlistuc.NewService(txm, waitlistRepo, slotRepo, bookingRepo)
+	reservationSvc := reservationuc.NewService(txm, reservationRepo, bookingRepo, slotRepo, waitlistRepo, nil, 5*time.Minute)
 	gen := slotgen.NewGenerator(roomRepo, scheduleRepo, slotRepo)
 
 	admin := domain.User{ID: adminID, Role: domain.RoleAdmin, Email: ""}
@@ -294,6 +300,44 @@ WHERE id = $1
 	require.NoError(t, err)
 	require.Equal(t, string(domain.WaitlistStatusNotified), status)
 	require.True(t, notifiedAt.Valid)
+
+	var reservationID uuid.UUID
+	var reservationStatus string
+	var reservationExpiresAt time.Time
+	err = pool.QueryRow(ctx, `
+SELECT id, status, expires_at
+FROM slot_reservations
+WHERE waitlist_entry_id = $1
+`, entry.ID).Scan(&reservationID, &reservationStatus, &reservationExpiresAt)
+	require.NoError(t, err)
+	require.Equal(t, string(domain.ReservationStatusActive), reservationStatus)
+	require.True(t, reservationExpiresAt.After(time.Now().UTC()))
+
+	afterCancelSlots, err := slotSvc.ListAvailableSlots(ctx, userA, room.ID, listDate)
+	require.NoError(t, err)
+	require.False(t, containsSlotID(afterCancelSlots, slotID), "reserved slot must not appear in available list")
+
+	_, err = bookingSvc.CreateBooking(ctx, userA, slotID, false)
+	require.Error(t, err)
+	de, ok := domain.AsDomainError(err)
+	require.True(t, ok)
+	require.Equal(t, domain.ErrorSlotReserved, de.Code)
+
+	confirmedBooking, _, err := reservationSvc.ConfirmReservation(ctx, userB, reservationID)
+	require.NoError(t, err)
+	require.Equal(t, userB.ID, confirmedBooking.UserID)
+	require.Equal(t, slotID, confirmedBooking.SlotID)
+
+	var finalReservationStatus string
+	var confirmedAt pgtype.Timestamptz
+	err = pool.QueryRow(ctx, `
+SELECT status, confirmed_at
+FROM slot_reservations
+WHERE id = $1
+`, reservationID).Scan(&finalReservationStatus, &confirmedAt)
+	require.NoError(t, err)
+	require.Equal(t, string(domain.ReservationStatusConfirmed), finalReservationStatus)
+	require.True(t, confirmedAt.Valid)
 }
 
 func containsSlotID(slots []domain.Slot, id uuid.UUID) bool {

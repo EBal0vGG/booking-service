@@ -14,6 +14,7 @@ tags:
   - name: Slots
   - name: Bookings
   - name: Waitlist
+  - name: Reservations
 
 components:
   securitySchemes:
@@ -47,6 +48,14 @@ components:
         type: string
         format: uuid
       description: Идентификатор записи в очереди ожидания
+    ReservationIdPath:
+      name: reservationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Идентификатор временного резерва слота
 
   schemas:
     ErrorResponse:
@@ -66,8 +75,10 @@ components:
                 - ROOM_NOT_FOUND
                 - SLOT_NOT_FOUND
                 - SLOT_ALREADY_BOOKED
+                - SLOT_RESERVED
                 - SLOT_NOT_BOOKED
                 - BOOKING_NOT_FOUND
+                - RESERVATION_NOT_FOUND
                 - WAITLIST_NOT_FOUND
                 - WAITLIST_ALREADY_JOINED
                 - FORBIDDEN
@@ -189,6 +200,38 @@ components:
           format: date-time
           description: Время окончания слота в UTC (ISO 8601, например 2024-06-10T09:30:00Z)
 
+    SlotView:
+      type: object
+      required: [id, roomId, start, end, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        roomId:
+          type: string
+          format: uuid
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [available, booked, reserved, past]
+        bookingId:
+          type: string
+          format: uuid
+          nullable: true
+        reservationId:
+          type: string
+          format: uuid
+          nullable: true
+        waitlistEntryId:
+          type: string
+          format: uuid
+          nullable: true
+
     Booking:
       type: object
       required: [id, slotId, userId, status]
@@ -237,6 +280,41 @@ components:
           type: string
           format: date-time
         notifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    SlotReservation:
+      type: object
+      required: [id, slotId, userId, status, expiresAt, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slotId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        waitlistEntryId:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          type: string
+          enum: [active, confirmed, expired, cancelled]
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        confirmedAt:
+          type: string
+          format: date-time
+          nullable: true
+        expiredAt:
           type: string
           format: date-time
           nullable: true
@@ -564,7 +642,7 @@ paths:
             format: date
       responses:
         '200':
-          description: Список доступных слотов (не занятых активной бронью). Пустой список, если у переговорки нет расписания или на эту дату нет слотов.
+          description: Список доступных слотов (не занятых активной бронью и не заблокированных активным временным резервом). Пустой список, если у переговорки нет расписания или на эту дату нет слотов.
           content:
             application/json:
               schema:
@@ -574,6 +652,56 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Slot'
+        '400':
+          description: Неверный запрос (отсутствует или некорректен параметр date)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Переговорка не найдена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InternalErrorResponse' }
+
+  /rooms/{roomId}/slots/all:
+    get:
+      tags: [Slots]
+      summary: Список всех слотов по переговорке и дате со статусом (admin и user)
+      description: >
+        Возвращает все слоты комнаты за дату в UTC со статусом:
+        available | booked | reserved | past.
+        Приоритет статусов: past > booked > reserved > available.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/RoomIdPath'
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Список слотов со статусами и связанными идентификаторами
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  slots:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SlotView'
         '400':
           description: Неверный запрос (отсутствует или некорректен параметр date)
           content:
@@ -653,14 +781,14 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '409':
-          description: Слот уже занят
+          description: Слот уже занят или временно зарезервирован
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
               example:
                 error:
-                  code: SLOT_ALREADY_BOOKED
-                  message: slot is already booked
+                  code: SLOT_RESERVED
+                  message: slot is reserved
         '500':
           description: Внутренняя ошибка сервера
           content:
@@ -912,6 +1040,142 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
         '404':
           description: Запись очереди ожидания не найдена (или не принадлежит пользователю)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InternalErrorResponse' }
+
+  /reservations/{reservationId}/confirm:
+    post:
+      tags: [Reservations]
+      summary: Подтвердить временный резерв и создать бронь (только владелец, роль user)
+      description: >
+        Доступно только роли user. Подтверждение возможно только для active-резерва
+        до момента его истечения. В случае успеха создаётся активная бронь, резерв
+        переводится в статус confirmed.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ReservationIdPath'
+      responses:
+        '200':
+          description: Резерв подтверждён, бронь создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  booking:
+                    $ref: '#/components/schemas/Booking'
+                  reservation:
+                    $ref: '#/components/schemas/SlotReservation'
+        '400':
+          description: Невалидный reservationId или резерв неактивен/просрочен
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: Резерв принадлежит другому пользователю
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Резерв не найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: Слот уже забронирован или зарезервирован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InternalErrorResponse' }
+
+  /reservations/my/active:
+    get:
+      tags: [Reservations]
+      summary: Список активных резервов текущего пользователя (роль user)
+      description: >
+        Возвращает только active-резервы текущего пользователя, у которых expiresAt > now.
+        Используется для восстановления состояния после reload/reconnect.
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Список активных резервов пользователя
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reservations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SlotReservation'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: Доступ запрещён (только user)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InternalErrorResponse' }
+
+  /reservations/{reservationId}/cancel:
+    post:
+      tags: [Reservations]
+      summary: Отменить временный резерв (только владелец, роль user)
+      description: >
+        Доступно только роли user. Отмена применима к active-резерву.
+        Если резерв уже не active, возвращается его текущее состояние.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ReservationIdPath'
+      responses:
+        '200':
+          description: Резерв отменён (или уже был в terminal-статусе)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reservation:
+                    $ref: '#/components/schemas/SlotReservation'
+        '400':
+          description: Невалидный reservationId
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '403':
+          description: Резерв принадлежит другому пользователю
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404':
+          description: Резерв не найден
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }

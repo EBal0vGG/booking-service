@@ -9,19 +9,21 @@ import (
 type ErrorCode string
 
 const (
-	ErrorInvalidRequest    ErrorCode = "INVALID_REQUEST"
-	ErrorUnauthorized      ErrorCode = "UNAUTHORIZED"
-	ErrorNotFound          ErrorCode = "NOT_FOUND"
-	ErrorRoomNotFound      ErrorCode = "ROOM_NOT_FOUND"
-	ErrorSlotNotFound      ErrorCode = "SLOT_NOT_FOUND"
-	ErrorSlotAlreadyBooked ErrorCode = "SLOT_ALREADY_BOOKED"
-	ErrorSlotNotBooked     ErrorCode = "SLOT_NOT_BOOKED"
-	ErrorBookingNotFound   ErrorCode = "BOOKING_NOT_FOUND"
-	ErrorWaitlistNotFound  ErrorCode = "WAITLIST_NOT_FOUND"
-	ErrorWaitlistJoined    ErrorCode = "WAITLIST_ALREADY_JOINED"
-	ErrorForbidden         ErrorCode = "FORBIDDEN"
-	ErrorScheduleExists    ErrorCode = "SCHEDULE_EXISTS"
-	ErrorInternalError     ErrorCode = "INTERNAL_ERROR"
+	ErrorInvalidRequest      ErrorCode = "INVALID_REQUEST"
+	ErrorUnauthorized        ErrorCode = "UNAUTHORIZED"
+	ErrorNotFound            ErrorCode = "NOT_FOUND"
+	ErrorRoomNotFound        ErrorCode = "ROOM_NOT_FOUND"
+	ErrorSlotNotFound        ErrorCode = "SLOT_NOT_FOUND"
+	ErrorSlotAlreadyBooked   ErrorCode = "SLOT_ALREADY_BOOKED"
+	ErrorSlotReserved        ErrorCode = "SLOT_RESERVED"
+	ErrorSlotNotBooked       ErrorCode = "SLOT_NOT_BOOKED"
+	ErrorBookingNotFound     ErrorCode = "BOOKING_NOT_FOUND"
+	ErrorReservationNotFound ErrorCode = "RESERVATION_NOT_FOUND"
+	ErrorWaitlistNotFound    ErrorCode = "WAITLIST_NOT_FOUND"
+	ErrorWaitlistJoined      ErrorCode = "WAITLIST_ALREADY_JOINED"
+	ErrorForbidden           ErrorCode = "FORBIDDEN"
+	ErrorScheduleExists      ErrorCode = "SCHEDULE_EXISTS"
+	ErrorInternalError       ErrorCode = "INTERNAL_ERROR"
 )
 
 // DomainError is returned by usecases and later mapped to HTTP responses.

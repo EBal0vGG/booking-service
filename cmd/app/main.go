@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"booking-service/internal/app"
+	"booking-service/internal/app/slotgen"
 	"booking-service/internal/config"
 	"booking-service/internal/observability/logging"
 	observabilitymetrics "booking-service/internal/observability/metrics"
@@ -20,6 +21,7 @@ import (
 	httptransport "booking-service/internal/transport/http"
 	authsvc "booking-service/internal/usecase/auth"
 	bookinguc "booking-service/internal/usecase/booking"
+	reservationuc "booking-service/internal/usecase/reservation"
 	roomuc "booking-service/internal/usecase/room"
 	scheduleuc "booking-service/internal/usecase/schedule"
 	slotuc "booking-service/internal/usecase/slot"
@@ -60,6 +62,7 @@ func main() {
 	slotRepo := postgres.NewSlotRepo(dbPool)
 	bookingRepo := postgres.NewBookingRepo(dbPool)
 	waitlistRepo := postgres.NewWaitlistRepo(dbPool)
+	reservationRepo := postgres.NewReservationRepo(dbPool)
 	txManager := postgres.NewTxManager(dbPool)
 
 	redisClient := redis.NewClient(&redis.Options{
@@ -86,8 +89,19 @@ func main() {
 	wsHandler := realtime.NewWSHandler(realtimeHub, cfg.JWTSecret)
 	bookingService := bookinguc.NewService(txManager, bookingRepo, slotRepo, realtimePublisher).
 		WithWaitlistRepository(waitlistRepo).
+		WithReservationRepository(reservationRepo, cfg.ReservationTTL).
 		WithMetrics(observabilitymetrics.NewBookingUsecaseMetrics())
 	waitlistService := waitlistuc.NewService(txManager, waitlistRepo, slotRepo, bookingRepo)
+	reservationService := reservationuc.NewService(
+		txManager,
+		reservationRepo,
+		bookingRepo,
+		slotRepo,
+		waitlistRepo,
+		realtimePublisher,
+		cfg.ReservationTTL,
+	).WithMetrics(observabilitymetrics.NewReservationUsecaseMetrics())
+	slotGenerator := slotgen.NewGenerator(roomRepo, scheduleRepo, slotRepo)
 
 	var backgroundWG sync.WaitGroup
 	subscriberErrCh := make(chan error, 1)
@@ -98,16 +112,55 @@ func main() {
 			subscriberErrCh <- err
 		}
 	}()
+	backgroundWG.Add(1)
+	go func() {
+		defer backgroundWG.Done()
+		ticker := time.NewTicker(cfg.ReservationExpireInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := reservationService.ExpireDue(ctx, cfg.ReservationExpireBatch); err != nil && !errors.Is(err, context.Canceled) {
+					slog.Warn("reservation expiration worker failed", "error", err)
+				}
+			}
+		}
+	}()
+	backgroundWG.Add(1)
+	go func() {
+		defer backgroundWG.Done()
+
+		if err := slotGenerator.Generate(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Warn("slot generation failed", "error", err)
+		}
+
+		ticker := time.NewTicker(cfg.SlotGenerateInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := slotGenerator.Generate(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					slog.Warn("slot generation failed", "error", err)
+				}
+			}
+		}
+	}()
 
 	router := httptransport.NewRouterWithDependencies(httptransport.RouterDependencies{
-		AuthUC:     authsvc.NewService(authsvc.NewHMACJWTSigner(cfg.JWTSecret), userRepo),
-		RoomUC:     roomuc.NewService(roomRepo),
-		ScheduleUC: scheduleuc.NewService(roomRepo, scheduleRepo),
-		SlotUC:     slotuc.NewService(roomRepo, slotRepo),
-		BookingUC:  bookingService,
-		WaitlistUC: waitlistService,
-		WSHandler:  wsHandler,
-		JWTSecret:  cfg.JWTSecret,
+		AuthUC:        authsvc.NewService(authsvc.NewHMACJWTSigner(cfg.JWTSecret), userRepo),
+		RoomUC:        roomuc.NewService(roomRepo),
+		ScheduleUC:    scheduleuc.NewService(roomRepo, scheduleRepo),
+		SlotUC:        slotuc.NewService(roomRepo, slotRepo),
+		BookingUC:     bookingService,
+		WaitlistUC:    waitlistService,
+		ReservationUC: reservationService,
+		WSHandler:     wsHandler,
+		JWTSecret:     cfg.JWTSecret,
+		CORSOrigins:   cfg.CORSAllowedOrigins,
 	})
 	server := httptransport.NewServer(cfg.Port, router)
 	errCh := make(chan error, 1)

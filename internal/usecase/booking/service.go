@@ -14,19 +14,22 @@ import (
 )
 
 type Service struct {
-	tx        repository.TxManager
-	bookings  repository.BookingRepository
-	slots     repository.SlotRepository
-	waitlists repository.WaitlistRepository
-	events    EventPublisher
-	metrics   BookingMetrics
-	now       func() time.Time
+	tx             repository.TxManager
+	bookings       repository.BookingRepository
+	slots          repository.SlotRepository
+	waitlists      repository.WaitlistRepository
+	reservations   repository.ReservationRepository
+	events         EventPublisher
+	metrics        BookingMetrics
+	reservationTTL time.Duration
+	now            func() time.Time
 }
 
 type EventPublisher interface {
 	SlotBooked(ctx context.Context, roomID, slotID, bookingID uuid.UUID)
 	SlotReleased(ctx context.Context, roomID, slotID, bookingID uuid.UUID)
-	WaitlistSlotAvailable(ctx context.Context, roomID, slotID, userID, waitlistEntryID uuid.UUID)
+	SlotReserved(ctx context.Context, roomID, slotID, reservationID uuid.UUID)
+	WaitlistSlotReserved(ctx context.Context, roomID, slotID, userID, reservationID, waitlistEntryID uuid.UUID, expiresAt time.Time)
 }
 
 type BookingMetrics interface {
@@ -40,6 +43,8 @@ type BookingMetrics interface {
 type noopEventPublisher struct{}
 type noopBookingMetrics struct{}
 
+const defaultReservationTTL = 5 * time.Minute
+
 func (noopEventPublisher) SlotBooked(ctx context.Context, roomID, slotID, bookingID uuid.UUID) {
 	_, _, _, _ = ctx, roomID, slotID, bookingID
 }
@@ -48,8 +53,12 @@ func (noopEventPublisher) SlotReleased(ctx context.Context, roomID, slotID, book
 	_, _, _, _ = ctx, roomID, slotID, bookingID
 }
 
-func (noopEventPublisher) WaitlistSlotAvailable(ctx context.Context, roomID, slotID, userID, waitlistEntryID uuid.UUID) {
-	_, _, _, _, _ = ctx, roomID, slotID, userID, waitlistEntryID
+func (noopEventPublisher) SlotReserved(ctx context.Context, roomID, slotID, reservationID uuid.UUID) {
+	_, _, _, _ = ctx, roomID, slotID, reservationID
+}
+
+func (noopEventPublisher) WaitlistSlotReserved(ctx context.Context, roomID, slotID, userID, reservationID, waitlistEntryID uuid.UUID, expiresAt time.Time) {
+	_, _, _, _, _, _, _ = ctx, roomID, slotID, userID, reservationID, waitlistEntryID, expiresAt
 }
 
 func (noopBookingMetrics) IncBookingCreated()     {}
@@ -83,17 +92,26 @@ func NewService(
 		publisher = events[0]
 	}
 	return &Service{
-		tx:       tx,
-		bookings: bookings,
-		slots:    slots,
-		events:   publisher,
-		metrics:  noopBookingMetrics{},
-		now:      func() time.Time { return time.Now().UTC() },
+		tx:             tx,
+		bookings:       bookings,
+		slots:          slots,
+		events:         publisher,
+		metrics:        noopBookingMetrics{},
+		reservationTTL: defaultReservationTTL,
+		now:            func() time.Time { return time.Now().UTC() },
 	}
 }
 
 func (s *Service) WithWaitlistRepository(waitlists repository.WaitlistRepository) *Service {
 	s.waitlists = waitlists
+	return s
+}
+
+func (s *Service) WithReservationRepository(reservations repository.ReservationRepository, ttl time.Duration) *Service {
+	s.reservations = reservations
+	if ttl > 0 {
+		s.reservationTTL = ttl
+	}
 	return s
 }
 
@@ -133,6 +151,15 @@ func (s *Service) CreateBooking(
 		if slot.StartTime.UTC().Before(now) {
 			return domain.NewDomainError(domain.ErrorInvalidRequest, "cannot create booking for past slot")
 		}
+		if s.reservations != nil {
+			activeReservation, err := s.reservations.GetActiveBySlotForUpdate(txCtx, slotID)
+			if err != nil {
+				return domain.WrapDomainError(domain.ErrorInternalError, "check slot reservation", err)
+			}
+			if activeReservation != nil {
+				return domain.NewDomainError(domain.ErrorSlotReserved, "slot is reserved")
+			}
+		}
 		roomID = slot.RoomID
 
 		created = domain.Booking{
@@ -157,7 +184,7 @@ func (s *Service) CreateBooking(
 		return nil
 	})
 	if err != nil {
-		if de, ok := domain.AsDomainError(err); ok && de.Code == domain.ErrorSlotAlreadyBooked {
+		if de, ok := domain.AsDomainError(err); ok && (de.Code == domain.ErrorSlotAlreadyBooked || de.Code == domain.ErrorSlotReserved) {
 			s.bookingMetrics().IncBookingConflict()
 		} else {
 			s.bookingMetrics().IncBookingCreateError()
@@ -179,6 +206,7 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 	var roomID uuid.UUID
 	var slotReleased bool
 	var notifiedEntry *domain.WaitlistEntry
+	var createdReservation *domain.SlotReservation
 	err := s.tx.WithinTransaction(ctx, func(txCtx context.Context) error {
 		existing, err := s.bookings.GetByID(txCtx, bookingID)
 		if err != nil {
@@ -214,6 +242,25 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 					return domain.WrapDomainError(domain.ErrorInternalError, "claim waitlist entry", err)
 				}
 				notifiedEntry = entry
+				if entry != nil {
+					if s.reservations == nil {
+						return domain.NewDomainError(domain.ErrorInternalError, "reservation repository is not configured")
+					}
+					reservationNow := s.now()
+					waitlistEntryID := entry.ID
+					createdReservation, err = s.reservations.Create(txCtx, domain.SlotReservation{
+						ID:              uuid.New(),
+						SlotID:          updated.SlotID,
+						UserID:          entry.UserID,
+						WaitlistEntryID: &waitlistEntryID,
+						Status:          domain.ReservationStatusActive,
+						ExpiresAt:       reservationNow.Add(s.reservationTTLValue()),
+						CreatedAt:       reservationNow,
+					})
+					if err != nil {
+						return domain.WrapDomainError(domain.ErrorInternalError, "create slot reservation", err)
+					}
+				}
 			}
 		}
 		result = *updated
@@ -225,18 +272,30 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 	}
 	s.bookingMetrics().IncBookingCancelled()
 	if slotReleased && roomID != uuid.Nil {
-		s.eventPublisher().SlotReleased(ctx, roomID, result.SlotID, result.ID)
-		if notifiedEntry != nil {
+		if createdReservation != nil && notifiedEntry != nil {
 			observabilitymetrics.IncWaitlistNotification()
+			observabilitymetrics.IncReservationCreated()
 			slog.Info(
-				"waitlist_notified",
+				"waitlist_reserved",
 				"slot_id", notifiedEntry.SlotID,
 				"user_id", notifiedEntry.UserID,
 				"waitlist_entry_id", notifiedEntry.ID,
 				"position", notifiedEntry.Position,
+				"reservation_id", createdReservation.ID,
+				"expires_at", createdReservation.ExpiresAt,
 			)
-			s.eventPublisher().WaitlistSlotAvailable(ctx, roomID, result.SlotID, notifiedEntry.UserID, notifiedEntry.ID)
+			s.eventPublisher().SlotReserved(ctx, roomID, result.SlotID, createdReservation.ID)
+			s.eventPublisher().WaitlistSlotReserved(
+				ctx,
+				roomID,
+				result.SlotID,
+				notifiedEntry.UserID,
+				createdReservation.ID,
+				notifiedEntry.ID,
+				createdReservation.ExpiresAt,
+			)
 		} else {
+			s.eventPublisher().SlotReleased(ctx, roomID, result.SlotID, result.ID)
 			slog.Info(
 				"waitlist_skipped",
 				"slot_id", result.SlotID,
@@ -248,6 +307,13 @@ func (s *Service) CancelBooking(ctx context.Context, user domain.User, bookingID
 		}
 	}
 	return result, nil
+}
+
+func (s *Service) reservationTTLValue() time.Duration {
+	if s.reservationTTL > 0 {
+		return s.reservationTTL
+	}
+	return defaultReservationTTL
 }
 
 func (s *Service) ListBookings(ctx context.Context, user domain.User, page, pageSize int) ([]domain.Booking, domain.Pagination, error) {
